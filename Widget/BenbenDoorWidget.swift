@@ -43,14 +43,18 @@ struct DoorWidgetView: View {
                 .foregroundStyle(.primary)
             }
         }
-        .containerBackground(for: .widget) {
-            ZStack {
-                Color(uiColor: .secondarySystemGroupedBackground)
-                LinearGradient(colors: [.cyan.opacity(0.25), .blue.opacity(0.12), .clear], startPoint: .topLeading, endPoint: .bottomTrailing)
-            }
-        }
+        .containerBackground(for: .widget) { widgetBackground }
         .widgetURL(URL(string: "benbenlock://unlock"))
         .accessibilityLabel("打开奔奔 App 并执行开门")
+    }
+
+    // This builder needs a View. Color.blue.gradient is an AnyGradient style,
+    // so returning it directly here causes the buildExpression compile error.
+    private var widgetBackground: some View {
+        ZStack {
+            Color(uiColor: .secondarySystemGroupedBackground)
+            LinearGradient(colors: [Color.cyan.opacity(0.25), Color.blue.opacity(0.12), Color.clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
     }
 }
 

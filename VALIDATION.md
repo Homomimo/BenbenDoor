@@ -11,6 +11,12 @@
 - Added GitHub Actions macOS simulator tests and unsigned device IPA packaging, including the Widget extension. Workflow has not yet run on GitHub.
 - Redesigned the SwiftUI interface with native Liquid Glass on iOS 26 (Swift 6.2+ compiler), material fallback, accessibility options and matching widget styling. UI appearance has not been rendered or tested with Xcode in this Windows environment.
 
+## User-reported cloud build failure and fix
+
+- The user reported an earlier GitHub Actions build failed while compiling BenbenDoorWidget.swift: buildExpression unavailable because the expression does not conform to View. XCTest was cancelled before running.
+- The original widget background returned Color.blue.gradient (AnyGradient) from a ViewBuilder. The current widget uses a separate background property returning some View (ZStack with Color and LinearGradient).
+- This correction is included in the current source ZIP and the standalone widget replacement file. A successful cloud rebuild has not yet been observed.
+
 ## Not executed here
 
 - Swift compilation, Xcode build, code signing, installation and WidgetKit runtime testing.
