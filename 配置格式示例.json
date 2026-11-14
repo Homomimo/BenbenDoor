@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "displayName": "示例门锁",
+  "deviceID": "123456",
+  "advertisedName": "KD-123456",
+  "agentID": "1234567890",
+  "sysID": "0987654321",
+  "region": 1,
+  "subregion": 1,
+  "devID": 1,
+  "seqNo": 1,
+  "validFrom": "2026-11-14T05:26:00Z",
+  "validUntil": "2027-11-15T04:00:00Z",
+  "timezone": "+08:00",
+  "config": "0"
+}

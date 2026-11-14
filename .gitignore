@@ -1,0 +1,11 @@
+xcuserdata/
+DerivedData/
+*.private.json
+*.ipa
+*.xcarchive
+.DS_Store
+build/
+dist/
+__pycache__/
+*.p12
+*.mobileprovision

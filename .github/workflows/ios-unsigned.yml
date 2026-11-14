@@ -1,0 +1,49 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run protocol tests and build unsigned IPA
+        shell: bash
+        run: bash ci/build-ios.sh
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BenbenDoor-iOS-unsigned
+          path: dist/BenbenDoor-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build logs and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BenbenDoor-iOS-diagnostics
+          path: |
+            build/ci/*.log
+            build/ci/*.json
+            build/ci/*.txt
+            build/ci/*.xcresult
+          if-no-files-found: warn
+          retention-days: 7
