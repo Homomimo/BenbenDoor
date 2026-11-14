@@ -25,6 +25,8 @@
 
 ## Status bar overlap correction
 
+- Import update 1.1 (Build 2): after the user reported files remained unselectable, replaced fileImporter with a native copy-mode document picker and added an explicit paste-JSON import screen. Both routes share decoding, size/expiry validation and Keychain persistence. App and widget versions match; new picker and paste flow still need Xcode/iPhone verification.
+
 - The user reported scroll content overlapped the status bar. Moved the home header out of the ScrollView into a fixed safe-area-respecting VStack, applied clipping to the scroll viewport, and placed the edge-to-edge decorative backdrop in a background modifier.
 - No fixed status-bar heights or device-specific offsets are used. The change still needs an Xcode build and iPhone verification, including scrolling, bounce, expanded logs and larger text.
 

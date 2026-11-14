@@ -64,14 +64,7 @@ struct DoorView: View {
         .sheet(isPresented: $showSettings, onDismiss: {
             if importAfterSettings { importAfterSettings = false; importing = true }
         }) { settings }
-        // Providers may label JSON as plain text or generic data. Validate the
-        // contents after selection rather than filtering by the provider's UTI.
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
-            switch result {
-            case .success(let url): door.importKey(from: url)
-            case .failure(let error): door.reportImportFailure(error)
-            }
-        }
+        .sheet(isPresented: $importing) { KeyImportView().environmentObject(door) }
         .onOpenURL { url in
             guard url.scheme?.lowercased() == "benbenlock", url.host?.lowercased() == "unlock" else { return }
             pendingUnlock = true
@@ -214,6 +207,7 @@ struct DoorView: View {
                     Label("在 App 或桌面小组件中一键开门", systemImage: "hand.tap")
                     Label("首次使用请允许蓝牙访问", systemImage: "antenna.radiowaves.left.and.right")
                     Label("钥匙仅保存在此设备", systemImage: "iphone")
+                    Text("版本 1.1 · Build 2").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Text("配置续期或重新发放后，请重新导入有效钥匙。")
@@ -232,6 +226,73 @@ struct DoorView: View {
         guard pendingUnlock, scenePhase == .active, UIApplication.shared.applicationState == .active else { return }
         pendingUnlock = false
         door.start()
+    }
+}
+
+private struct KeyImportView: View {
+    @EnvironmentObject private var door: BluetoothDoor
+    @Environment(\.dismiss) private var dismiss
+    @State private var showFiles = false
+    @State private var json = ""
+    @State private var resultMessage = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Button { showFiles = true } label: {
+                        Label("选择配置文件", systemImage: "doc.badge.plus")
+                    }
+                    .disabled(door.isBusy)
+                } footer: {
+                    Text("选择 JSON 或文本配置文件。如果文件仍为灰色，可将完整 JSON 内容粘贴到下方导入。")
+                }
+                Section("粘贴配置 JSON") {
+                    TextEditor(text: $json)
+                        .font(.system(.footnote, design: .monospaced))
+                        .autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .frame(minHeight: 180)
+                        .accessibilityLabel("配置 JSON 内容")
+                    Button("校验并导入") {
+                        if door.importKey(text: json) { json = ""; dismiss() }
+                        else { resultMessage = door.status }
+                    }
+                    .disabled(door.isBusy || json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if !resultMessage.isEmpty {
+                    Section("导入结果") { Text(resultMessage).font(.footnote) }
+                }
+            }
+            .navigationTitle("导入钥匙配置").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+            .sheet(isPresented: $showFiles) {
+                KeyDocumentPicker { url in
+                    showFiles = false
+                    if let url = url { door.importKey(from: url); resultMessage = door.status }
+                }
+                .ignoresSafeArea()
+            }
+        }
+    }
+}
+
+private struct KeyDocumentPicker: UIViewControllerRepresentable {
+    let completion: (URL?) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        // Copy mode allows providers to supply a local file for import.
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .content, .json, .plainText], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.shouldShowFileExtensions = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let completion: (URL?) -> Void
+        init(completion: @escaping (URL?) -> Void) { self.completion = completion }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { completion(urls.first) }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { completion(nil) }
     }
 }
 

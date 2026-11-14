@@ -59,15 +59,30 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
             }
             if let error = coordinationError { throw error }
             guard let result = readResult else { throw DoorError.message("无法读取配置，请先在“文件”App 中下载到本机后重试。") }
-            let data = try result.get()
-            let imported: DoorKey
-            do { imported = try JSONDecoder().decode(DoorKey.self, from: data) }
-            catch { throw DoorError.message("文件不是有效的门锁配置 JSON，请选择完整的配置文件。") }
-            try imported.validate()
-            try KeyStore.save(imported)
-            reloadKey()
-            append("已导入门锁配置：\(imported.displayName)")
+            try saveImportedKey(result.get())
         } catch { reportImportFailure(error) }
+    }
+
+    @discardableResult func importKey(text: String) -> Bool {
+        guard !isBusy else { return false }
+        do {
+            try saveImportedKey(Data(text.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
+            return true
+        } catch { reportImportFailure(error); return false }
+    }
+
+    private func saveImportedKey(_ input: Data) throws {
+        guard input.count <= 64 * 1024 else { throw DoorError.message("配置文件过大。") }
+        var data = input
+        if data.starts(with: [0xEF, 0xBB, 0xBF]) { data.removeFirst(3) }
+        let imported: DoorKey
+        do { imported = try JSONDecoder().decode(DoorKey.self, from: data) }
+        catch { throw DoorError.message("内容不是有效的门锁配置 JSON，请导入完整配置。") }
+        try imported.validate()
+        try KeyStore.save(imported)
+        reloadKey()
+        status = "已导入配置：\(imported.displayName)"
+        append(status)
     }
 
     func reportImportFailure(_ error: Error) {
