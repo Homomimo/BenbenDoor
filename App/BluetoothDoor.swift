@@ -43,14 +43,38 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 64 * 1024 else { throw DoorError.message("配置文件过大。") }
-            let imported = try JSONDecoder().decode(DoorKey.self, from: Data(contentsOf: url))
+            var readResult: Result<Data, Error>?
+            var coordinationError: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
+                readResult = Result {
+                    let values = try readableURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+                    guard values.isDirectory != true else { throw DoorError.message("请选择配置文件，不要选择文件夹。") }
+                    guard (values.fileSize ?? 0) <= 64 * 1024 else { throw DoorError.message("配置文件过大。") }
+                    var data = try Data(contentsOf: readableURL)
+                    guard data.count <= 64 * 1024 else { throw DoorError.message("配置文件过大。") }
+                    // Accept UTF-8 JSON exported by Windows tools with a BOM.
+                    if data.starts(with: [0xEF, 0xBB, 0xBF]) { data.removeFirst(3) }
+                    return data
+                }
+            }
+            if let error = coordinationError { throw error }
+            guard let result = readResult else { throw DoorError.message("无法读取配置，请先在“文件”App 中下载到本机后重试。") }
+            let data = try result.get()
+            let imported: DoorKey
+            do { imported = try JSONDecoder().decode(DoorKey.self, from: data) }
+            catch { throw DoorError.message("文件不是有效的门锁配置 JSON，请选择完整的配置文件。") }
             try imported.validate()
             try KeyStore.save(imported)
             reloadKey()
             append("已导入门锁配置：\(imported.displayName)")
-        } catch { status = "导入失败：\(error.localizedDescription)"; append(status) }
+        } catch { reportImportFailure(error) }
+    }
+
+    func reportImportFailure(_ error: Error) {
+        let failure = error as NSError
+        if failure.domain == NSCocoaErrorDomain && failure.code == NSUserCancelledError { return }
+        status = "导入失败：\(error.localizedDescription)"
+        append(status)
     }
 
     func removeKey() {

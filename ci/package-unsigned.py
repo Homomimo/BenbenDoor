@@ -17,6 +17,8 @@ def read_info(bundle):
 
 app_info = read_info(app)
 widget_info = read_info(widget)
+assert (app / 'Assets.car').is_file(), 'Compiled asset catalog missing'
+assert app_info.get('CFBundleIcons', {}).get('CFBundlePrimaryIcon', {}).get('CFBundleIconName') == 'AppIcon', 'App icon metadata missing'
 assert widget_info['CFBundleIdentifier'].startswith(app_info['CFBundleIdentifier'] + '.')
 assert widget_info['NSExtension']['NSExtensionPointIdentifier'] == 'com.apple.widgetkit-extension'
 assert 'iPhoneOS' in app_info['CFBundleSupportedPlatforms'], 'Simulator builds cannot be installed on iPhone'

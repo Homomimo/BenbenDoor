@@ -24,11 +24,15 @@ struct DoorView: View {
     private var accent: Color { door.lastSucceeded ? .green : .blue }
 
     var body: some View {
-        ZStack {
-            DoorBackdrop()
+        // The fixed header and scroll viewport both respect the safe area.
+        // Only the decorative background may extend behind the status bar.
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 24).padding(.vertical, 12)
+                .frame(maxWidth: 560).frame(maxWidth: .infinity)
+                .background(.regularMaterial)
             ScrollView {
                 VStack(spacing: 30) {
-                    header
                     VStack(spacing: 10) {
                         Text(door.hasKey ? "你的门，轻点即开" : "让回家更简单")
                             .font(.subheadline).foregroundStyle(.secondary)
@@ -52,15 +56,20 @@ struct DoorView: View {
                 .frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
             .scrollIndicators(.hidden)
+            // Clip bouncing/scrolling content below the fixed header.
+            .clipped()
         }
+        .background { DoorBackdrop() }
         .tint(accent)
         .sheet(isPresented: $showSettings, onDismiss: {
             if importAfterSettings { importAfterSettings = false; importing = true }
         }) { settings }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+        // Providers may label JSON as plain text or generic data. Validate the
+        // contents after selection rather than filtering by the provider's UTI.
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             switch result {
             case .success(let url): door.importKey(from: url)
-            case .failure: break
+            case .failure(let error): door.reportImportFailure(error)
             }
         }
         .onOpenURL { url in

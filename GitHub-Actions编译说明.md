@@ -23,14 +23,16 @@ BenbenDoor.xcodeproj/
 1. 打开仓库的 Actions 页，如系统要求启用工作流，则启用。
 2. 选择 **Build unsigned iOS IPA** → **Run workflow** → 选择分支 → **Run workflow**。
 3. 提交到 main/master 分支以及 Pull Request 也会触发编译。手动运行需先将工作流放入仓库默认分支。
-4. 等待任务完成。在该次运行页的 Artifacts 中下载 **BenbenDoor-iOS-unsigned**。
-5. 解压下载的 Artifact ZIP，取得 **BenbenDoor-unsigned.ipa**。
+4. main/master 推送或分支手动运行：编译及测试成功后，自动创建并发布 GitHub Release，附带 **BenbenDoor-unsigned.ipa** 和 **SHA256SUMS.txt**。在仓库 Releases 页直接下载 IPA，无需先解压 Artifact。
+5. Pull Request 仅构建验证，不发布。也可在运行页 Artifacts 下载 **BenbenDoor-iOS-unsigned**，解压取得 IPA。
 
 工作流使用 `macos-15` runner，自动选择其已安装、带 iOS 26 或更高 SDK 的正式 Xcode，以编译原生 Liquid Glass 界面。如果镜像未安装所需版本，会在开始测试前明确报错。最低运行系统仍是 iOS 17，旧系统使用兼容磨砂效果。
 
 先运行 7 项 XCTest，再以真机 iOS SDK 构建 arm64 App 和 Widget，最后打包 `Payload/BenbenDoor.app`。未通过测试或归档失败时，不会上传 IPA。无需 Gradle、DCloud 或第三方 Swift 依赖。
 
-IPA 构建产物保留 14 天，诊断资料保留 7 天。私有仓库的 macOS runner 用量遵循你的 GitHub 套餐。工作流不会创建 Release 或提交任何仓库更改。
+Artifact 保留 14 天，诊断资料保留 7 天；Release 附件独立保留。私有仓库的 macOS runner 用量遵循你的 GitHub 套餐。
+
+发布使用独立的 release job，只有该 job 获得 `contents: write`，自动使用内置 GITHUB_TOKEN，无需添加个人 Token。Release 标签为 `ios-build-运行序号-重跑次数`，绑定本次构建提交，并标记 Latest。先上传附件至草稿，上传成功再发布，避免公开空附件的 Release。编译、测试或附件上传失败不会发布；失败后可能留下草稿，可在 Releases 中查看。若仓库/组织策略禁止写权限，发布步骤会报错，此时需在仓库策略中允许该工作流创建 Release。
 
 ## 签名与安装
 
