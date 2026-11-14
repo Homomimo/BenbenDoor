@@ -3,6 +3,28 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p build/ci dist
+# Compile the native Liquid Glass branch with an iOS 26 SDK or newer.
+DEVELOPER_DIR="$(python3 - <<'PY'
+import os, pathlib, subprocess
+candidates = []
+for app in pathlib.Path('/Applications').glob('Xcode*.app'):
+    if 'beta' in app.name.lower():
+        continue
+    developer = str(app / 'Contents/Developer')
+    env = dict(os.environ, DEVELOPER_DIR=developer)
+    try:
+        sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'], env=env, text=True, stderr=subprocess.DEVNULL).strip()
+        version = tuple(int(part) for part in sdk.split('.'))
+    except (subprocess.CalledProcessError, ValueError):
+        continue
+    if version >= (26, 0):
+        candidates.append((version, developer))
+if not candidates:
+    raise SystemExit('This UI requires an installed stable Xcode with iOS SDK 26+. Check the GitHub runner image.')
+print(max(candidates)[1])
+PY
+)"
+export DEVELOPER_DIR
 xcodebuild -version | tee build/ci/xcode-version.txt
 xcodebuild -list -project BenbenDoor.xcodeproj | tee build/ci/project.log
 plutil -lint App/Info.plist Widget/Info.plist BenbenDoor.xcodeproj/project.pbxproj

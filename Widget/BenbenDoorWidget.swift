@@ -21,21 +21,34 @@ struct DoorWidgetView: View {
             } else {
                 HStack {
                     VStack(alignment: .leading, spacing: 10) {
-                        Image(systemName: "lock.open.fill").font(.system(size: 30, weight: .medium))
+                        Image(systemName: "lock.open.fill")
+                            .font(.system(size: 24, weight: .light))
+                            .foregroundStyle(.blue)
+                            .frame(width: 52, height: 52)
+                            .background(.white.opacity(0.16), in: Circle())
+                            .overlay { Circle().strokeBorder(.white.opacity(0.45), lineWidth: 1) }
                         Spacer(minLength: 0)
                         Text("一键开门").font(.title2.bold())
-                        Text("奔奔门锁").font(.caption).opacity(0.8)
+                        Text("奔奔门锁").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                     if family == .systemMedium {
-                        Image(systemName: "arrow.up.forward.circle.fill")
-                            .font(.system(size: 42)).opacity(0.9)
+                        Image(systemName: "arrow.up.forward")
+                            .font(.system(size: 22, weight: .medium))
+                            .frame(width: 54, height: 54)
+                            .background(.white.opacity(0.16), in: Circle())
+                            .overlay { Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1) }
                     }
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
             }
         }
-        .containerBackground(for: .widget) { Color.blue.gradient }
+        .containerBackground(for: .widget) {
+            ZStack {
+                Color(uiColor: .secondarySystemGroupedBackground)
+                LinearGradient(colors: [.cyan.opacity(0.25), .blue.opacity(0.12), .clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        }
         .widgetURL(URL(string: "benbenlock://unlock"))
         .accessibilityLabel("打开奔奔 App 并执行开门")
     }
