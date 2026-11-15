@@ -4,7 +4,7 @@ import UIKit
 
 @main
 struct BenbenDoorApp: App {
-    @StateObject private var door = BluetoothDoor()
+    @StateObject private var door = BluetoothDoor.shared
     var body: some Scene {
         WindowGroup { DoorView().environmentObject(door) }
     }
@@ -21,6 +21,8 @@ struct DoorView: View {
     @State private var showSettings = false
     @State private var importAfterSettings = false
     @State private var showLog = false
+    @State private var backgroundUnlock = KeyStore.backgroundUnlockEnabled
+    @State private var backgroundSettingError = ""
     private var accent: Color { door.lastSucceeded ? .green : .blue }
 
     var body: some View {
@@ -72,7 +74,7 @@ struct DoorView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { runPendingUnlock() }
-            if phase == .background { pendingUnlock = false; door.cancel() }
+            if phase == .background { pendingUnlock = false; door.appEnteredBackground() }
         }
         .sensoryFeedback(.success, trigger: door.lastSucceeded) { _, succeeded in succeeded }
     }
@@ -207,7 +209,19 @@ struct DoorView: View {
                     Label("在 App 或桌面小组件中一键开门", systemImage: "hand.tap")
                     Label("首次使用请允许蓝牙访问", systemImage: "antenna.radiowaves.left.and.right")
                     Label("钥匙仅保存在此设备", systemImage: "iphone")
-                    Text("版本 1.1 · Build 2").font(.footnote).foregroundStyle(.secondary)
+                    Text("版本 1.2 · Build 3").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    Toggle("允许锁屏快捷开门", isOn: Binding(get: { backgroundUnlock }, set: { enabled in
+                        do {
+                            try KeyStore.setBackgroundUnlockEnabled(enabled)
+                            backgroundUnlock = enabled
+                        } catch { backgroundSettingError = error.localizedDescription }
+                    }))
+                    .disabled(!door.hasKey || door.isBusy)
+                    if !backgroundSettingError.isEmpty { Text(backgroundSettingError).foregroundStyle(.red).font(.footnote) }
+                } footer: {
+                    Text("开启后，可用快捷指令中的“蓝牙开门”动作尝试锁屏开门。钥匙会在本次开机首次解锁后允许后台读取。后台扫描与执行受系统限制；原有“打开 URL”入口仍会打开 App。")
                 }
                 Section {
                     Text("配置续期或重新发放后，请重新导入有效钥匙。")
@@ -215,6 +229,7 @@ struct DoorView: View {
                 }
             }
             .navigationTitle("钥匙与设置").navigationBarTitleDisplayMode(.inline)
+            .onAppear { backgroundUnlock = KeyStore.backgroundUnlockEnabled }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSettings = false } } }
             .confirmationDialog("移除本机保存的门锁钥匙？", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
                 Button("移除钥匙", role: .destructive) { door.removeKey() }

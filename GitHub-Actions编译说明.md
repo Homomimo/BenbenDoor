@@ -28,7 +28,7 @@ BenbenDoor.xcodeproj/
 
 工作流使用 `macos-15` runner，自动选择其已安装、带 iOS 26 或更高 SDK 的正式 Xcode，以编译原生 Liquid Glass 界面。如果镜像未安装所需版本，会在开始测试前明确报错。最低运行系统仍是 iOS 17，旧系统使用兼容磨砂效果。
 
-先运行 7 项 XCTest，再以真机 iOS SDK 构建 arm64 App 和 Widget，最后打包 `Payload/BenbenDoor.app`。未通过测试或归档失败时，不会上传 IPA。无需 Gradle、DCloud 或第三方 Swift 依赖。
+先运行 10 项 XCTest，再以真机 iOS SDK 构建 arm64 App 和 Widget，最后打包 `Payload/BenbenDoor.app`。未通过测试或归档失败时，不会上传 IPA。无需 Gradle、DCloud 或第三方 Swift 依赖。
 
 Artifact 保留 14 天，诊断资料保留 7 天；Release 附件独立保留。私有仓库的 macOS runner 用量遵循你的 GitHub 套餐。
 
@@ -44,4 +44,4 @@ Artifact 保留 14 天，诊断资料保留 7 天；Release 附件独立保留�
 
 下载同一次运行的 **BenbenDoor-iOS-diagnostics**，内含 Xcode 版本、工程信息、测试日志、归档日志以及生成成功的 `.xcresult` 测试结果。也可以直接查看失败步骤日志。
 
-当前 Windows 环境仅完成工程、配置和脚本静态检查；工作流尚未在 GitHub macOS runner 上执行，尚无实际生成的 IPA。Android 版已获用户实机开门成功反馈；iOS 版仍需独立完成云编译和真机测试。
+制作环境为 Windows。用户已确认 iOS 1.1 安装使用正常；当前 1.2 新增后台快捷指令尚需独立完成云编译与真机验证。

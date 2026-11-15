@@ -30,12 +30,20 @@
 - The user reported scroll content overlapped the status bar. Moved the home header out of the ScrollView into a fixed safe-area-respecting VStack, applied clipping to the scroll viewport, and placed the edge-to-edge decorative backdrop in a background modifier.
 - No fixed status-bar heights or device-specific offsets are used. The change still needs an Xcode build and iPhone verification, including scrolling, bounce, expanded logs and larger text.
 
+## Background unlock 1.2 Build 3
+
+- Previous iOS 1.1 installation/use was confirmed working by the user.
+- Added an opt-in App Intent, bluetooth-central mode, shared controller, scoped background execution, 25-second deadline and completion/cancellation handling.
+- Keychain access changes only when the user enables the lock-screen setting; default remains WhenUnlockedThisDeviceOnly.
+- Added three XCTest cases for opt-in, stale request rejection and foreground-only UI operation, ten tests total. These await Xcode execution.
+- New App Intent and background Bluetooth operation have not been compiled or tested here; no claim of successful lock-screen opening.
+
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.
 
 - Swift compilation, Xcode build, code signing, installation and WidgetKit runtime testing.
-- The seven XCTest methods included in this project.
+- The ten XCTest methods included in this project.
 - iPhone Core Bluetooth communication, actual door response or physical opening.
 
 The source and protocol fixture checks are not a substitute for an Xcode build or an iPhone test. Run the included GitHub Actions workflow or build on a Mac; sign the IPA and test on an iPhone. Android physical opening was confirmed by the user on 2026-11-14, which does not verify the iOS app.

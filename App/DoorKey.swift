@@ -56,7 +56,25 @@ enum DoorError: LocalizedError {
     }
 }
 
+enum DoorUnlockPolicy {
+    static func validate(background: Bool, enabled: Bool, foreground: Bool,
+                         deadline: Date, now: Date = Date()) throws {
+        guard now <= deadline else { throw DoorError.message("本次请求已过期，已停止发送。") }
+        if background {
+            guard enabled else { throw DoorError.message("请先在 App 设置开启“允许锁屏快捷开门”。") }
+        } else {
+            guard foreground else { throw DoorError.message("请保持 App 在前台。") }
+        }
+    }
+}
+
 enum KeyStore {
+    static var backgroundUnlockEnabled: Bool { UserDefaults.standard.bool(forKey: "backgroundUnlockEnabled") }
+    static func setBackgroundUnlockEnabled(_ enabled: Bool) throws {
+        guard let key = try load() else { throw DoorError.message("请先导入门锁配置。") }
+        try save(key, background: enabled)
+        UserDefaults.standard.set(enabled, forKey: "backgroundUnlockEnabled")
+    }
     private static let service = "BenbenDoor.local-key"
     private static let account = "active-door"
     static func load() throws -> DoorKey? {
@@ -71,12 +89,13 @@ enum KeyStore {
         }
         return try JSONDecoder().decode(DoorKey.self, from: data)
     }
-    static func save(_ key: DoorKey) throws {
+    static func save(_ key: DoorKey, background: Bool? = nil) throws {
         let data = try JSONEncoder().encode(key)
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service, kSecAttrAccount as String: account]
         let attributes: [String: Any] = [kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+            kSecAttrAccessible as String: (background ?? backgroundUnlockEnabled)
+                ? kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly : kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             let create = query.merging(attributes) { _, new in new }
@@ -93,5 +112,6 @@ enum KeyStore {
         guard code == errSecSuccess || code == errSecItemNotFound else {
             throw DoorError.message("删除失败（\(code)）。")
         }
+        UserDefaults.standard.removeObject(forKey: "backgroundUnlockEnabled")
     }
 }

@@ -4,6 +4,7 @@ import CoreBluetooth
 import UIKit
 
 final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+    static let shared = BluetoothDoor()
     @Published private(set) var doorName = "尚未配置门锁"
     @Published private(set) var status = "导入配置后即可测试"
     @Published private(set) var isBusy = false
@@ -21,6 +22,12 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
     private var stage = Stage.idle
     private var receiveBuffer: [UInt8] = []
     private var pendingWrite: Data?
+    private var backgroundOperation = false
+    private var requestDeadline: Date?
+    private var completion: ((Result<String, Error>) -> Void)?
+    private var requestID: UUID?
+    private var overallTimeout: Timer?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private enum Stage { case idle, waitingBluetooth, scanning, connecting, discovering, selecting, unlocking }
 
     override init() {
@@ -98,9 +105,36 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         catch { status = error.localizedDescription }
     }
 
-    func start() {
-        guard !isBusy else { return }
-        guard UIApplication.shared.applicationState == .active else { return }
+    func start() { begin(background: false, completion: nil) }
+
+    @MainActor func unlockFromShortcut() async throws -> String {
+        let id = UUID()
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                begin(background: true, id: id) { continuation.resume(with: $0) }
+            }
+        }, onCancel: {
+            Task { @MainActor in
+                if self.requestID == id { self.cancel() }
+            }
+        })
+    }
+
+    func appEnteredBackground() {
+        if !backgroundOperation { cancel() }
+    }
+
+    private func begin(background: Bool, id: UUID = UUID(), completion callback: ((Result<String, Error>) -> Void)?) {
+        guard !isBusy else {
+            callback?(.failure(DoorError.message("已有开门操作正在进行，请等待结果。"))); return
+        }
+        guard background || UIApplication.shared.applicationState == .active else { return }
+        if background && !KeyStore.backgroundUnlockEnabled {
+            callback?(.failure(DoorError.message("请先在 App 设置开启“允许锁屏快捷开门”。"))); return
+        }
+        backgroundOperation = background
+        completion = callback; requestID = id
         do {
             guard let stored = try KeyStore.load() else {
                 throw DoorError.message("请先导入门锁配置。")
@@ -115,10 +149,20 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
             isBusy = true
             stage = .waitingBluetooth
             receiveBuffer = []
+            // A stale connection must never issue an unlock after the request window.
+            requestDeadline = Date().addingTimeInterval(25)
+            overallTimeout = Timer.scheduledTimer(withTimeInterval: 25, repeats: false) { [weak self] _ in
+                self?.finish("本次开门已超时；如已发送指令，请确认门锁现场状态。", success: false)
+            }
+            if background {
+                backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BenbenDoorUnlock") { [weak self] in
+                    self?.finish("系统结束了后台执行时间，请在 App 内确认并重试。", success: false)
+                }
+            }
             append("开始开门：\(stored.displayName)")
             if central.state == .poweredOn { scan() }
             else { status = "等待蓝牙就绪…"; armTimeout(15, message: "蓝牙未就绪，请检查蓝牙权限和开关。") }
-        } catch { status = error.localizedDescription; append(status) }
+        } catch { finish(error.localizedDescription, success: false) }
     }
 
     func cancel() {
@@ -142,6 +186,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
     }
 
     private func finish(_ message: String, success: Bool) {
+        overallTimeout?.invalidate(); overallTimeout = nil
         timeout?.invalidate(); timeout = nil
         central.stopScan()
         if let peripheral {
@@ -151,7 +196,14 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         peripheral = nil; writeCharacteristic = nil; notifyCharacteristic = nil
         pendingWrite = nil; receiveBuffer = []; stage = .idle
         isBusy = false; lastSucceeded = success; status = message; append(message)
-        if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+        let callback = completion
+        completion = nil; requestID = nil; requestDeadline = nil; backgroundOperation = false
+        if backgroundTask != .invalid {
+            let task = backgroundTask; backgroundTask = .invalid
+            UIApplication.shared.endBackgroundTask(task)
+        }
+        callback?(success ? .success(message) : .failure(DoorError.message(message)))
+        if success && UIApplication.shared.applicationState == .active { UINotificationFeedbackGenerator().notificationOccurred(.success) }
     }
 
     private func scan() {
@@ -235,6 +287,13 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
     }
 
     private func write(_ value: Data) {
+        guard isBusy, let deadline = requestDeadline else {
+            finish("本次请求已过期，已停止发送。", success: false); return
+        }
+        do {
+            try DoorUnlockPolicy.validate(background: backgroundOperation, enabled: KeyStore.backgroundUnlockEnabled,
+                                          foreground: UIApplication.shared.applicationState == .active, deadline: deadline)
+        } catch { finish(error.localizedDescription, success: false); return }
         guard let peripheral, let characteristic = writeCharacteristic else {
             finish("蓝牙通道不可用。", success: false); return
         }
@@ -297,7 +356,8 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
                 append("选锁成功，固件 minor=\(minor)，电压 \(voltage)V")
             } else { append("选锁完成（简短响应）") }
             do {
-                guard UIApplication.shared.applicationState == .active else { throw DoorError.message("请保持 App 在前台。") }
+                guard backgroundOperation || UIApplication.shared.applicationState == .active else { throw DoorError.message("请保持 App 在前台。") }
+                if backgroundOperation && !KeyStore.backgroundUnlockEnabled { throw DoorError.message("锁屏快捷开门已关闭。") }
                 try key.validate()
                 let data = try DoorProtocol.unlock(key, session: session, minorVersion: minor, now: Date())
                 stage = .unlocking; status = "正在开门…"
