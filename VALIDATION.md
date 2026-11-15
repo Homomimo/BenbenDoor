@@ -38,6 +38,14 @@
 - Added three XCTest cases for opt-in, stale request rejection and foreground-only UI operation, ten tests total. These await Xcode execution.
 - New App Intent and background Bluetooth operation have not been compiled or tested here; no claim of successful lock-screen opening.
 
+## Background reconnect diagnostics 1.2.1 Build 4
+
+- User reports that the 1.2 shortcut spins while the phone is unlocked and only proceeds when the app is opened. The exact cause remains unconfirmed.
+- Added successful-peripheral UUID caching, direct reconnect with a discovery fallback before any unlock write, Dispatch-based stage watchdogs, and expiry checks on Bluetooth callbacks and foreground resume.
+- Added persisted stage diagnostics excluding raw packet bytes and an explicit App Intent entry/return log.
+- Request validity is 25 seconds; process suspension can delay watchdog execution and shortcut completion. Expired operations are rejected when execution resumes.
+- This revision has not been compiled with Xcode or verified on an iPhone. Ten XCTest methods remain pending macOS execution.
+
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.
