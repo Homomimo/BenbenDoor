@@ -10,7 +10,7 @@ struct UnlockDoorIntent: AppIntent {
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         let door = BluetoothDoor.shared
-        door.recordShortcutEvent("已开始执行蓝牙开门，版本 1.3.2 Build 10")
+        door.recordShortcutEvent("已开始执行蓝牙开门，版本 \(AppVersion.display)")
         guard KeyStore.backgroundUnlockEnabled else {
             door.recordShortcutEvent("无法开门：尚未开启锁屏快捷开门")
             throw DoorError.message("请先打开奔奔开门，在设置中开启“允许锁屏快捷开门”。")

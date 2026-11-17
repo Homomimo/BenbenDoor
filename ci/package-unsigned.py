@@ -1,6 +1,9 @@
 """Validate the unsigned device archive and package an IPA, retaining WidgetKit."""
 import pathlib
+import json
+import os
 import plistlib
+import re
 import subprocess
 import tempfile
 import zipfile
@@ -17,6 +20,9 @@ def read_info(bundle):
 
 app_info = read_info(app)
 widget_info = read_info(widget)
+for field in ['CFBundleShortVersionString', 'CFBundleVersion']:
+    assert app_info[field] == widget_info[field], f'App/widget version mismatch: {field}'
+    assert '$(' not in app_info[field], f'Unresolved version setting: {field}'
 assert (app / 'Assets.car').is_file(), 'Compiled asset catalog missing'
 assert app_info.get('CFBundleIcons', {}).get('CFBundlePrimaryIcon', {}).get('CFBundleIconName') == 'AppIcon', 'App icon metadata missing'
 assert widget_info['CFBundleIdentifier'].startswith(app_info['CFBundleIdentifier'] + '.')
@@ -28,12 +34,12 @@ for bundle, info in [(app, app_info), (widget, widget_info)]:
     archs = subprocess.check_output(['xcrun', 'lipo', '-archs', str(executable)], text=True).split()
     assert 'arm64' in archs, (bundle.name, archs)
     assert not (bundle / 'embedded.mobileprovision').exists(), 'Expected an unsigned archive'
-    # A valid app binary alone is insufficient for a ControlWidget action.
-    # Ensure intent extraction produced nonempty metadata in BOTH targets.
-    metadata = bundle / 'Metadata.appintents'
-    files = [p for p in metadata.rglob('*') if p.is_file()] if metadata.is_dir() else []
-    assert files and sum(p.stat().st_size for p in files) > 0, f'Missing intent metadata: {bundle.name}'
-    assert any(b'ControlDoorIntent' in p.read_bytes() for p in files), f'Control intent absent from metadata: {bundle.name}'
+
+# The retained shortcut belongs to the main app only. The timeline widget no
+# longer declares an App Intent and does not require extracted intent metadata.
+metadata = app / 'Metadata.appintents'
+files = [p for p in metadata.rglob('*') if p.is_file()] if metadata.is_dir() else []
+assert files and any(b'UnlockDoorIntent' in p.read_bytes() for p in files), 'Main app unlock shortcut metadata missing'
 
 out = root / 'dist/BenbenDoor-unsigned.ipa'
 out.parent.mkdir(exist_ok=True)
@@ -51,3 +57,16 @@ with zipfile.ZipFile(out) as archive:
     assert 'Payload/BenbenDoor.app/PlugIns/BenbenDoorWidget.appex/BenbenDoorWidget' in archive.namelist()
     assert not any(name.endswith('.private.json') for name in archive.namelist())
 print('Unsigned device IPA (app + widget):', out)
+
+tests_log = (root / 'build/ci/tests.log').read_text(encoding='utf-8', errors='replace')
+summaries = re.findall(r'Executed \d+ tests?, with \d+ failures?[^\n]*', tests_log)
+build_info = {
+    'appVersion': app_info['CFBundleShortVersionString'],
+    'build': app_info['CFBundleVersion'],
+    'iosSdk': (root / 'build/ci/ios-sdk.txt').read_text().strip(),
+    'xcode': (root / 'build/ci/xcode-version.txt').read_text().strip(),
+    'commit': os.environ.get('GITHUB_SHA', 'local'),
+    'tests': summaries[-1] if summaries else 'xcodebuild test succeeded; inspect ProtocolTests.xcresult for details',
+    'deviceValidation': 'Not performed by this build workflow',
+}
+(out.parent / 'BuildInfo.json').write_text(json.dumps(build_info, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

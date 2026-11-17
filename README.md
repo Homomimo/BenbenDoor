@@ -1,6 +1,6 @@
 # 奔奔开门 · iOS 测试工程
 
-> 当前修订：1.3.2 Build 10。控制中心使用固定系统门图标及系统玻璃底板；图标显示仍待实机验证。iOS 26 SDK 构建的控制中心按钮会打开 App 执行；只有 iOS 27+ SDK 构建且运行于 iOS 27+ 时使用主 App 后台执行。原后台“蓝牙开门”快捷指令不变。详见 控制中心按钮说明.md。
+> 当前修订：1.4.1 Build 13。修复同批/提交前分包回复可能提前误报成功的问题，并在导入结束后清理 App 自己的临时配置副本。保留缓存直连、阶段耗时日志、液态玻璃界面、桌面/锁屏小组件与后台快捷指令，原生控制中心按钮已移除。详见 1.4.1修复说明.md 和 优化版测试说明.md。
 
 
 SwiftUI App + WidgetKit 桌面/锁屏小组件，最低 iOS 17。无需第三方依赖，直接使用 Xcode 工程。
@@ -11,17 +11,16 @@ SwiftUI App + WidgetKit 桌面/锁屏小组件，最低 iOS 17。无需第三方
 
 已内置冰蓝玻璃门图标：`App/Assets.xcassets/AppIcon.appiconset` 包含 iPhone 各尺寸及 1024px 主图，已连接 App 的资源编译和 AppIcon 设置。提交源码时请包含整个 Assets.xcassets 文件夹和更新后的 project.pbxproj。图标 PNG 为不透明正方形，由系统应用外轮廓。
 
-点击小组件后，系统打开 App；App 进入前台后自动执行一次“扫描 → 连接 → 选锁 → 开门 → 显示结果”。普通打开 App 不会自动开门。手机需要解锁时先由系统完成解锁。首次使用需要导入配置并授权蓝牙。
+点击小组件后，系统打开 App；App 进入前台后自动执行一次“缓存直连或扫描 → 连接 → 选锁 → 开门 → 显示结果”。普通打开 App 不会自动开门。手机需要解锁时先由系统完成解锁。首次使用需要导入配置并授权蓝牙。
 
-当前为 1.3.1 · Build 9，针对用户反馈的控制中心图标空白、点击未进入主 App，修订动作执行声明、图标与刷新策略。控制中心修订待实机验证，升级后请删除旧按钮并重新添加。详见“控制中心按钮说明.md”。交付为源码与未签名 IPA 编译流程。
 
 ## 安装到 iPhone
 
 没有 Mac 时，可使用已附带的 GitHub Actions 工作流编译未签名 IPA，不需要配置签名 Secrets。将本目录内容（含 `.github`）提交到仓库根目录，再到 Actions 手动运行 **Build unsigned iOS IPA**。详见 [GitHub Actions 编译说明](GitHub-Actions编译说明.md)。产物需后续签名才可安装，当前还未实际触发云编译。
 
-分支推送或手动构建成功后，工作流自动发布 Release，附带 IPA 与 SHA-256 校验文件；Pull Request 仅验证构建。发布标签包含运行序号及重跑次数，便于区分每次产物。
+分支推送或手动构建成功后，工作流自动发布 Release，附带 IPA、BuildInfo.json 构建信息与 SHA-256 校验文件；Pull Request 仅验证构建。发布标签包含运行序号及重跑次数，便于区分每次产物。
 
-1. 将整个 BenbenDoor 文件夹复制到 Mac，使用支持 iOS 17 的 Xcode 打开 BenbenDoor.xcodeproj。
+1. 将整个 BenbenDoor 文件夹复制到 Mac，使用 Xcode 26 或更高版本 打开 BenbenDoor.xcodeproj。
 2. 选中 BenbenDoor 和 BenbenDoorWidget 两个 target，在 Signing & Capabilities 中选择同一个开发 Team，开启自动签名。
 3. 将 App Bundle Identifier 改为自己唯一的标识，例如 com.yourname.benbendoor；Widget 改为其下级 com.yourname.benbendoor.widget。两者需保持前缀关系。测试 target 如需签名，也选择相同 Team。
 4. 连接 iPhone，按 Xcode 提示启用开发者模式及信任设置；选择 BenbenDoor scheme 和该 iPhone，点击 Run。
@@ -49,7 +48,7 @@ App 注册了 URL scheme：`benbenlock://unlock`。
 
 1.1（Build 2）替换旧 SwiftUI fileImporter：点击导入先进入导入页面，再通过原生 UIDocumentPickerViewController，以副本模式选择 JSON、文本或普通数据文件。若文件仍不可选，可以把完整配置 JSON 粘贴到同一页面，点击“校验并导入”，无需文件选择器。设置页显示版本号以确认安装更新。
 
-两种入口共用完整 JSON 结构、大小和授权有效期校验，通过后才保存到 Keychain。支持 UTF-8 BOM；文件入口通过系统文件协调器读取内容。若云盘文件无法读取，可先在“文件”App 中下载/保存至“我的 iPhone”后再选取。不会自动读取剪贴板，导入不会触发开门。
+两种入口共用完整 JSON 结构、大小和授权有效期校验，通过后才保存到 Keychain。支持 UTF-8 BOM；文件入口通过系统文件协调器读取内容。1.4.1 将文件选择器交付的 App 临时副本移入独立目录，实际读取结束后清理，失败和取消也执行清理；用户原文件保留。清理失败会单独提示，下一次进程启动会再次清理本 App 专属遗留目录。无法确认副本位置时会提示改用粘贴导入。若云盘文件无法读取，可先在“文件”App 中下载/保存至“我的 iPhone”后再选取。不会自动读取剪贴板，导入不会触发开门。
 
 导入内容保存到此 App 的本机 Keychain，默认使用 WhenUnlockedThisDeviceOnly，主动开启锁屏快捷开门后改为 AfterFirstUnlockThisDeviceOnly；小组件不读取钥匙，不需要 App Group。卸载、签名或 Bundle ID 变化后，应确认钥匙是否需要重新导入。App 提供“移除本机钥匙”。
 
@@ -82,7 +81,7 @@ App 注册了 URL scheme：`benbenlock://unlock`。
 
 ## 验证
 
-在 Mac 上选 BenbenDoor scheme，执行 Product → Test。Tests/DoorProtocolTests.swift 含 10 项测试（含 3 项后台执行权限/时限策略检查），预期报文由原始小程序 JS 使用合成参数生成，覆盖 ID 转换、选锁、时区、开门报文、固件选项、响应校验与有效期。
+在 Mac 上选 BenbenDoor scheme，执行 Product → Test。Tests/DoorProtocolTests.swift 含 47 项测试，覆盖协议、接收解析、发送状态、时区、导入和后台策略，包括同批/跨通知的提交前回复隔离、临时文件清理、取消与原文件保护。预期报文由原始小程序 JS 使用合成参数生成，覆盖 ID 转换、选锁、时区、开门报文、固件选项、响应校验与有效期。
 
 命令行示例（把设备替换为实际可用的 Simulator）：
 
@@ -100,3 +99,5 @@ Simulator 可跑协议单元测试，实际蓝牙开门需 iPhone。当前制作
 - Tests/：使用原始 JS 预期值的协议测试。
 - BenbenDoor.xcodeproj/：App、Widget 和 XCTest targets，含共享 scheme。
 - 配置格式示例.json：合成配置格式。
+
+版本统一保存在 Version.xcconfig，App/Widget 的 Info.plist 使用构建变量，界面和日志读取实际安装版本。更新仓库时必须一并提交 Version.xcconfig。ci/test-package.py 含5项可在 Windows/macOS 运行的合成打包策略测试，CI 会在 Xcode 测试前执行。

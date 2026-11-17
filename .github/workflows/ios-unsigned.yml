@@ -23,8 +23,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check build flags with macOS Bash
-        run: python3 ci/test-build-flags.py
+      - name: Check unsigned packaging policy
+        run: python3 ci/test-package.py
 
       - name: Run protocol tests and build unsigned IPA
         shell: bash
@@ -34,7 +34,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: BenbenDoor-iOS-unsigned
-          path: dist/BenbenDoor-unsigned.ipa
+          path: |
+            dist/BenbenDoor-unsigned.ipa
+            dist/BuildInfo.json
           if-no-files-found: error
           retention-days: 14
 
@@ -80,18 +82,20 @@ jobs:
         run: |
           set -euo pipefail
           test -s dist/BenbenDoor-unsigned.ipa
-          (cd dist && sha256sum BenbenDoor-unsigned.ipa > SHA256SUMS.txt)
+          test -s dist/BuildInfo.json
+          (cd dist && sha256sum BenbenDoor-unsigned.ipa BuildInfo.json > SHA256SUMS.txt)
           TAG="ios-build-${BUILD_NUMBER}-${BUILD_ATTEMPT}"
           TITLE="奔奔开门 iOS · Build ${BUILD_NUMBER}.${BUILD_ATTEMPT}"
           {
             printf '## iOS 未签名测试版\n\n'
             printf '下载 BenbenDoor-unsigned.ipa，自行签名后安装。包含 App 与桌面/锁屏小组件，最低 iOS 17。\n\n'
+            python3 -c 'import json; info = json.load(open("dist/BuildInfo.json")); print("App 版本：{} · Build {}\n\n构建 SDK：{}\n\n测试：{}\n".format(info["appVersion"], info["build"], info["iosSdk"], info["tests"]))'
             printf '钥匙配置需在 App 内单独导入，发布附件不含真实门锁配置。\n\n'
             printf '提交：`%s`\n\n' "$BUILD_SHA"
             printf '构建记录：%s/%s/actions/runs/%s\n' "$BUILD_SERVER" "$GH_REPO" "$BUILD_RUN_ID"
           } > release-notes.md
           gh release create "$TAG" \
-            dist/BenbenDoor-unsigned.ipa dist/SHA256SUMS.txt \
+            dist/BenbenDoor-unsigned.ipa dist/BuildInfo.json dist/SHA256SUMS.txt \
             --target "$BUILD_SHA" --title "$TITLE" \
             --notes-file release-notes.md --draft
           gh release edit "$TAG" --draft=false --latest

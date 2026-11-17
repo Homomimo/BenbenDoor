@@ -1,17 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
-import WidgetKit
 
 @main
 struct BenbenDoorApp: App {
     @StateObject private var door = BluetoothDoor.shared
 
-    init() {
-        if #available(iOS 18.0, *) {
-            ControlCenter.shared.reloadAllControls()
-        }
-    }
     var body: some Scene {
         WindowGroup { DoorView().environmentObject(door) }
     }
@@ -25,6 +19,7 @@ struct DoorView: View {
     @State private var importing = false
     @State private var pendingUnlock = false
     @State private var showDeleteConfirmation = false
+    @State private var showClockConfirmation = false
     @State private var showSettings = false
     @State private var importAfterSettings = false
     @State private var showLog = false
@@ -129,7 +124,7 @@ struct DoorView: View {
             .padding(12)
         }
         .buttonStyle(DoorPressStyle(reduceMotion: reduceMotion))
-        .disabled(door.isBusy || !door.hasKey)
+        .disabled(door.isBusy || door.isImporting || !door.hasKey)
         .accessibilityIdentifier("unlock-button")
         .accessibilityLabel(door.isBusy ? "正在开门" : "一键开门")
         .accessibilityHint(door.hasKey ? "连接附近已配置的门锁并开门" : "请先导入门锁配置")
@@ -158,7 +153,7 @@ struct DoorView: View {
                 .font(.headline).frame(maxWidth: .infinity).padding(18)
                 .modifier(DoorGlass(cornerRadius: 24, interactive: true, tint: .blue.opacity(0.1)))
         }
-        .buttonStyle(.plain).disabled(door.isBusy)
+        .buttonStyle(.plain).disabled(door.isBusy || door.isImporting)
     }
 
     private var widgetHint: some View {
@@ -182,7 +177,7 @@ struct DoorView: View {
                     ShareLink(item: door.exportedLog) { Label("分享日志", systemImage: "square.and.arrow.up") }
                     Spacer()
                     Button { door.clearLog() } label: { Label("清空", systemImage: "trash") }
-                        .disabled(door.isBusy)
+                        .disabled(door.isBusy || door.isImporting)
                 }
                 .font(.footnote)
                 Text(door.log.isEmpty ? "连接步骤和门锁响应将在这里显示。" : door.log.joined(separator: "\n"))
@@ -206,26 +201,23 @@ struct DoorView: View {
                         importAfterSettings = true
                         showSettings = false
                     }
-                    .disabled(door.isBusy)
+                    .disabled(door.isBusy || door.isImporting)
                     if door.hasKey {
                         Button("移除本机钥匙", role: .destructive) { showDeleteConfirmation = true }
-                            .disabled(door.isBusy)
+                            .disabled(door.isBusy || door.isImporting)
                     }
                 }
                 Section("使用方式") {
                     Label("在 App 或桌面小组件中一键开门", systemImage: "hand.tap")
                     Label("首次使用请允许蓝牙访问", systemImage: "antenna.radiowaves.left.and.right")
                     Label("钥匙仅保存在此设备", systemImage: "iphone")
-                    Text("版本 1.3.2 · Build 10").font(.footnote).foregroundStyle(.secondary)
-                    #if BENBEN_IOS27_SDK
-                    if #available(iOS 27.0, *) {
-                        Text("控制中心按钮：后台开门").font(.footnote).foregroundStyle(.secondary)
-                    } else {
-                        Text("控制中心按钮：打开 App 后开门").font(.footnote).foregroundStyle(.secondary)
+                    Text("版本 \(AppVersion.display)").font(.footnote).foregroundStyle(.secondary)
+                    if door.needsClockConfirmation {
+                        Button("确认手机时间已校正") { showClockConfirmation = true }
+                            .disabled(door.isBusy || door.isImporting)
+                        Text("先在系统设置中核对自动日期与时间。确认只重置操作时间记录，不会开门，也不会延长钥匙有效期。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
-                    #else
-                    Text("控制中心按钮：打开 App 后开门").font(.footnote).foregroundStyle(.secondary)
-                    #endif
                 }
                 Section {
                     Toggle("允许锁屏快捷开门", isOn: Binding(get: { backgroundUnlock }, set: { enabled in
@@ -234,7 +226,7 @@ struct DoorView: View {
                             backgroundUnlock = enabled
                         } catch { backgroundSettingError = error.localizedDescription }
                     }))
-                    .disabled(!door.hasKey || door.isBusy)
+                    .disabled(!door.hasKey || door.isBusy || door.isImporting)
                     if !backgroundSettingError.isEmpty { Text(backgroundSettingError).foregroundStyle(.red).font(.footnote) }
                 } footer: {
                     Text("开启后，可用快捷指令中的“蓝牙开门”动作尝试锁屏开门。钥匙会在本次开机首次解锁后允许后台读取。后台扫描与执行受系统限制；原有“打开 URL”入口仍会打开 App。")
@@ -249,6 +241,9 @@ struct DoorView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSettings = false } } }
             .confirmationDialog("移除本机保存的门锁钥匙？", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
                 Button("移除钥匙", role: .destructive) { door.removeKey() }
+            }
+            .confirmationDialog("已核对系统日期、时间及时区？", isPresented: $showClockConfirmation, titleVisibility: .visible) {
+                Button("已校正，重置操作时间记录") { door.confirmCorrectedClock() }
             }
         }
     }
@@ -274,7 +269,8 @@ private struct KeyImportView: View {
                     Button { showFiles = true } label: {
                         Label("选择配置文件", systemImage: "doc.badge.plus")
                     }
-                    .disabled(door.isBusy)
+                    .disabled(door.isBusy || door.isImporting)
+                    if door.isImporting { ProgressView("正在读取并校验配置…") }
                 } footer: {
                     Text("选择 JSON 或文本配置文件。如果文件仍为灰色，可将完整 JSON 内容粘贴到下方导入。")
                 }
@@ -285,10 +281,12 @@ private struct KeyImportView: View {
                         .frame(minHeight: 180)
                         .accessibilityLabel("配置 JSON 内容")
                     Button("校验并导入") {
-                        if door.importKey(text: json) { json = ""; dismiss() }
-                        else { resultMessage = door.status }
+                        Task { @MainActor in
+                            if await door.importKey(text: json) { json = ""; dismiss() }
+                            else { resultMessage = door.status }
+                        }
                     }
-                    .disabled(door.isBusy || json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(door.isBusy || door.isImporting || json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 if !resultMessage.isEmpty {
                     Section("导入结果") { Text(resultMessage).font(.footnote) }
@@ -297,9 +295,30 @@ private struct KeyImportView: View {
             .navigationTitle("导入钥匙配置").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
             .sheet(isPresented: $showFiles) {
-                KeyDocumentPicker { url in
+                KeyDocumentPicker { selection in
                     showFiles = false
-                    if let url = url { door.importKey(from: url); resultMessage = door.status }
+                    if let selection {
+                        switch selection {
+                        case .failure(let error):
+                            door.reportImportFailure(error)
+                            resultMessage = door.status
+                        case .success(let copy):
+                            Task { @MainActor in
+                                let outcome = await copy.consume { await door.importKey(from: copy.url) }
+                                switch outcome.result {
+                                case .success:
+                                    resultMessage = door.status
+                                case .failure(let error):
+                                    if error is CancellationError { resultMessage = "已取消导入。" }
+                                    else { door.reportImportFailure(error); resultMessage = door.status }
+                                }
+                                if let error = outcome.cleanupError {
+                                    door.reportImportCleanupFailure(error)
+                                    resultMessage += "\n临时配置副本未能清理（诊断编号 \((error as NSError).code)），请完全退出后重新打开 App，以再次清理。"
+                                }
+                            }
+                        }
+                    }
                 }
                 .ignoresSafeArea()
             }
@@ -308,7 +327,7 @@ private struct KeyImportView: View {
 }
 
 private struct KeyDocumentPicker: UIViewControllerRepresentable {
-    let completion: (URL?) -> Void
+    let completion: (Result<DoorKeyImportCopy, Error>?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         // Copy mode allows providers to supply a local file for import.
@@ -320,9 +339,12 @@ private struct KeyDocumentPicker: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let completion: (URL?) -> Void
-        init(completion: @escaping (URL?) -> Void) { self.completion = completion }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { completion(urls.first) }
+        let completion: (Result<DoorKeyImportCopy, Error>?) -> Void
+        init(completion: @escaping (Result<DoorKeyImportCopy, Error>?) -> Void) { self.completion = completion }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { completion(nil); return }
+            completion(Result { try DoorKeyImportCopy.claimPickerCopy(url) })
+        }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { completion(nil) }
     }
 }

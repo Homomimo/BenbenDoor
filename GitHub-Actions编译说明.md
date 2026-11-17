@@ -10,6 +10,8 @@
 .github/workflows/ios-unsigned.yml
 ci/build-ios.sh
 ci/package-unsigned.py
+ci/test-package.py
+Version.xcconfig
 App/
 Widget/
 Tests/
@@ -23,12 +25,14 @@ BenbenDoor.xcodeproj/
 1. 打开仓库的 Actions 页，如系统要求启用工作流，则启用。
 2. 选择 **Build unsigned iOS IPA** → **Run workflow** → 选择分支 → **Run workflow**。
 3. 提交到 main/master 分支以及 Pull Request 也会触发编译。手动运行需先将工作流放入仓库默认分支。
-4. main/master 推送或分支手动运行：编译及测试成功后，自动创建并发布 GitHub Release，附带 **BenbenDoor-unsigned.ipa** 和 **SHA256SUMS.txt**。在仓库 Releases 页直接下载 IPA，无需先解压 Artifact。
+4. main/master 推送或分支手动运行：编译及测试成功后，自动创建并发布 GitHub Release，附带 **BenbenDoor-unsigned.ipa**、**BuildInfo.json** 和 **SHA256SUMS.txt**。在仓库 Releases 页直接下载 IPA，无需先解压 Artifact。
 5. Pull Request 仅构建验证，不发布。也可在运行页 Artifacts 下载 **BenbenDoor-iOS-unsigned**，解压取得 IPA。
 
 工作流使用 `macos-15` runner，自动选择其已安装、带 iOS 26 或更高 SDK 的正式 Xcode，以编译原生 Liquid Glass 界面。如果镜像未安装所需版本，会在开始测试前明确报错。最低运行系统仍是 iOS 17，旧系统使用兼容磨砂效果。
 
-先运行 10 项 XCTest，再以真机 iOS SDK 构建 arm64 App 和 Widget，最后打包 `Payload/BenbenDoor.app`。未通过测试或归档失败时，不会上传 IPA。无需 Gradle、DCloud 或第三方 Swift 依赖。
+先运行5项 Python 打包策略回归和30项 XCTest，再以真机 iOS SDK 构建 arm64 App 和 Widget，最后打包 `Payload/BenbenDoor.app`。未通过测试或归档失败时，不会上传 IPA。无需 Gradle、DCloud 或第三方 Swift 依赖。
+
+Version.xcconfig 是版本号唯一来源。BuildInfo.json 记录实际 App 版本、SDK、Xcode、提交和测试摘要；它不代表完成过门锁实机验证。
 
 Artifact 保留 14 天，诊断资料保留 7 天；Release 附件独立保留。私有仓库的 macOS runner 用量遵循你的 GitHub 套餐。
 
@@ -44,4 +48,4 @@ Artifact 保留 14 天，诊断资料保留 7 天；Release 附件独立保留�
 
 下载同一次运行的 **BenbenDoor-iOS-diagnostics**，内含 Xcode 版本、工程信息、测试日志、归档日志以及生成成功的 `.xcresult` 测试结果。也可以直接查看失败步骤日志。
 
-制作环境为 Windows。用户已确认 iOS 1.1 安装使用正常；当前 1.2 新增后台快捷指令尚需独立完成云编译与真机验证。
+制作环境为 Windows。用户已确认既有普通开门和亮屏后台快捷指令可用；当前1.4.0的优化仍需独立完成云编译与真机回归。

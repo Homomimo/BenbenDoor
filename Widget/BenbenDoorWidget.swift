@@ -1,6 +1,5 @@
 import SwiftUI
 import WidgetKit
-import AppIntents
 
 struct DoorEntry: TimelineEntry { let date: Date }
 struct DoorProvider: TimelineProvider {
@@ -59,6 +58,7 @@ struct DoorWidgetView: View {
     }
 }
 
+@main
 struct BenbenDoorWidget: Widget {
     let kind = "BenbenDoorWidget"
     var body: some WidgetConfiguration {
@@ -69,28 +69,3 @@ struct BenbenDoorWidget: Widget {
     }
 }
 
-@available(iOS 18.0, *)
-struct BenbenDoorControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.benbendoor.control.unlock.v3") {
-            ControlWidgetButton(action: ControlDoorIntent()) {
-                // A single, stable symbol label for both gallery and installed
-                // control. Control Center supplies the glass plate and contrast.
-                Label("奔奔开门", systemImage: "door.left.hand.open")
-            }
-            .tint(.cyan)
-        }
-        .displayName("奔奔开门")
-        .description("一键连接门锁并开门。兼容构建会打开 App 执行；需先开启锁屏快捷开门。")
-    }
-}
-
-@main
-struct BenbenDoorWidgets: WidgetBundle {
-    var body: some Widget {
-        BenbenDoorWidget()
-        if #available(iOS 18.0, *) {
-            BenbenDoorControl()
-        }
-    }
-}

@@ -1,5 +1,14 @@
 # Validation status
 
+## Review fixes 1.4.1 Build 13
+
+- The production DoorResponseSession classifies each receive/recovery batch before controller events can submit an unlock. Actual submission discards pre-submission partial bytes; a flow-controlled command does not discard or mark submission early.
+- Added seven Swift regression cases for coalesced old results, every pre-submission split point, flow control, fragment recovery, normal reply splits, pre-selection fragments and reset. Session refresh compatibility remains unchanged. A delayed standalone reply first delivered after submission cannot be authenticated as belonging to a particular request by this protocol.
+- The picker transfers only confirmed App-owned copies into unique staging directories. Consumption awaits the actual read before cleanup, including failure, early rejection and cancellation. Cleanup failures are reported separately from successful saving. Startup cleanup is limited to this helper's UUID-named directories and excludes symbolic links.
+- Added ten Swift file-lifecycle tests using synthetic local files, including original-file protection, duplicate ownership, cancellation while reading, cleanup failure and startup sweep boundaries.
+- Five Python packaging regressions ran and passed on Windows. Static project/plist/scheme/source-archive and independent original-protocol fixture checks are included in the local release validation.
+- There are 47 XCTest methods in the current source. Swift compilation, these tests, actual picker copy paths and iPhone Bluetooth behavior have not been executed in this Windows environment. The included macOS workflow remains responsible for Xcode testing, unsigned device archive and automatic Release publication.
+
 ## Passed in the Windows authoring environment
 
 - Parsed the generated OpenStep Xcode project; all object references resolve and referenced source files exist.
@@ -61,41 +70,31 @@
 - Checked all known Bluetooth state mappings and raw-packet persistence filtering locally. No protocol, timeout or connection-policy changes in this revision.
 - Swift compilation and iPhone display verification remain pending.
 
-## Native Control Center button 1.3.0 Build 8
+## Control Center removal 1.3.3 Build 11
 
-- Added an iOS 18+ StaticControlConfiguration with ControlWidgetButton, registered alongside the original widget in a WidgetBundle.
-- Included ControlDoorIntent in app and extension targets; app-only ForegroundContinuableIntent conformance routes to the app implementation, which awaits the existing unlock intent. Extension fallback explicitly throws instead of reporting success.
-- Checked source target membership and extension compilation flags. No shared Keychain or additional Bluetooth controller was added to the extension.
-- Xcode compilation, control gallery registration, process routing, lock-screen authentication and physical door operation remain unverified for this feature.
+- Removed the native control, shared ControlDoorIntent, app refresh/settings, Xcode references, SDK routing flags, flag-only CI check and control-specific packaging requirements at the user's request.
+- Retained the original timeline home/lock-screen widget, its URL opening path, the background UnlockDoorIntent, Liquid Glass app UI and automatic Release workflow.
+- Packaging still checks main-app UnlockDoorIntent metadata. No extension intent metadata is required for the timeline widget.
+- Local project/plist/scheme/protocol/source ZIP checks passed; Swift compilation, XCTest and device upgrade behavior remain pending macOS CI and iPhone verification.
 
-## Control Center revision 1.3.1 Build 9
+## Reliability and performance revision 1.4.0 Build 12
 
-- User reports blank control icon and no app entry log when tapping on iOS 27.3 beta 1. The exact runtime cause is not proven.
-- Added supportedModes to both control intent builds, re-enabled discoverability and added SDK-gated iOS 27 main-app execution targeting. Build scripts enable the new gate only when the installed SDK supports it.
-- Changed the control to an explicit title, key symbol and running caption, used a new control kind, and reload controls on app launch. The old Label initializer is also a documented supported API; this is not proof that its usage caused the blank icon.
-- Added archive checks that both app and extension contain control intent metadata. These checks require the macOS archive and have not executed locally.
-- App/extension routing, icon rendering and the user's beta OS remain pending device verification. Remove the old control before adding this revision.
-
-## Build flags correction for 1.3.1
-
-- User reports CONTROL_SWIFT_FLAGS unbound variable while running the CI build script.
-- Replaced the optional empty Bash array with a nonempty quoted scalar that preserves inherited Swift flags and adds the iOS 27 SDK gate when needed.
-- Added a runner-side regression check using /bin/bash under nounset for SDK 26, 27 and 28; the workflow runs it before the Xcode build. Bash execution and Xcode compilation are not available in this Windows environment, so these checks remain pending the macOS runner.
-
-## Control Center revision 1.3.2 Build 10
-
-- User confirms the home widget displays and opens the app successfully, while the control displays only text and produces no app entry log. Control-specific rendering and routing remain unverified.
-- SDK 26 builds now explicitly foreground the app before performing the control action. SDK 27 builds on iOS 27 retain main-app-only background execution. This removes the SDK 26 background compatibility path that could dispatch into the throwing extension implementation.
-- Removed app-only deprecated ForegroundContinuableIntent conformance. Both targets now advertise matching execution modes. Existing background shortcut behavior is retained.
-- Simplified the control to a stable system door symbol Label and system tint; Control Center supplies the glass appearance. New control kind v3 requires replacing the old control. Icon root cause is not established and rendering is not verified.
-- Settings and action logs identify the routing path. Static source checks and packaging do not prove system dispatch or physical opening. Xcode and device validation remain pending.
+- Added a pure response decoder and exchange state with strict business lengths, fragmented/combined frame handling, invalid-header recovery, actual submission tracking and duplicate-write prevention.
+- Preserved the original client's response session refresh semantics. There is no unproven response-session equality requirement.
+- All active opening paths now attempt remembered-peripheral reconnect. A failed direct connection triggers a 60-second in-process scan-first cooldown. Same-door renewal retains the cache only after Keychain save succeeds.
+- ContinuousClock deadlines are shared by callback and write checks. Key validity is rechecked immediately before submission, including queued writes; queued commands rebuild their time window when the channel is ready.
+- File import reads/decodes off the main actor with bounded file reads. Import and opening are mutually excluded. Time rollback records are scoped to authorization; a foreground confirmation recovers from a corrected device clock without extending key validity or opening a door.
+- Logs record stage and cumulative durations; raw packets never enter the new persistent ring. Stage saves coalesce over 0.5 seconds and flush at completion/background transitions. A sudden process exit can lose the unflushed tail.
+- Shared Version.xcconfig supplies app/widget versions. CI includes regression XCTest cases and preserves automatic Release publication. Runtime UI/log versions use bundle metadata.
+- Five packaging policy regressions ran and passed locally using synthetic bundles and substituted lipo/ditto commands. They exercise the real Python packager, not an Xcode archive or iPhone installation.
+- Static project/protocol/archive checks pass locally; added XCTest execution, actor-isolation compilation and physical speed/reliability verification require macOS CI/iPhone.
 
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.
 
 - Swift compilation, Xcode build, code signing, installation and WidgetKit runtime testing.
-- The ten XCTest methods included in this project.
+- The forty-seven XCTest methods included in the current project.
 - iPhone Core Bluetooth communication, actual door response or physical opening.
 
 The source and protocol fixture checks are not a substitute for an Xcode build or an iPhone test. Run the included GitHub Actions workflow or build on a Mac; sign the IPA and test on an iPhone. Android physical opening was confirmed by the user on 2026-11-14, which does not verify the iOS app.

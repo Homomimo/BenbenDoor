@@ -8,8 +8,8 @@
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.3.2</string>
-  <key>CFBundleVersion</key><string>10</string>
+  <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
   <key>UIBackgroundModes</key><array><string>bluetooth-central</string></array>
   <key>LSRequiresIPhoneOS</key><true/>
   <key>NSBluetoothAlwaysUsageDescription</key><string>用于连接您已授权的奔奔门锁并执行开门。</string>

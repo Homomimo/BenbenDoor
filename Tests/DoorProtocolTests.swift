@@ -3,23 +3,23 @@ import XCTest
 
 final class DoorProtocolTests: XCTestCase {
     func testBackgroundUnlockRequiresExplicitOptIn() {
-        let deadline = Date(timeIntervalSince1970: 100)
-        let instant = Date(timeIntervalSince1970: 90)
+        let instant = ContinuousClock().now
+        let deadline = instant.advanced(by: .seconds(10))
         XCTAssertThrowsError(try DoorUnlockPolicy.validate(background: true, enabled: false, foreground: false, deadline: deadline, now: instant))
         XCTAssertNoThrow(try DoorUnlockPolicy.validate(background: true, enabled: true, foreground: false, deadline: deadline, now: instant))
     }
 
     func testExpiredRequestCannotSendFromForegroundOrBackground() {
-        let deadline = Date(timeIntervalSince1970: 100)
-        let instant = Date(timeIntervalSince1970: 101)
+        let deadline = ContinuousClock().now
+        let instant = deadline.advanced(by: .seconds(1))
         for background in [false, true] {
             XCTAssertThrowsError(try DoorUnlockPolicy.validate(background: background, enabled: true, foreground: true, deadline: deadline, now: instant))
         }
     }
 
     func testOrdinaryUnlockStillRequiresForeground() {
-        let deadline = Date(timeIntervalSince1970: 100)
-        let instant = Date(timeIntervalSince1970: 90)
+        let instant = ContinuousClock().now
+        let deadline = instant.advanced(by: .seconds(10))
         XCTAssertThrowsError(try DoorUnlockPolicy.validate(background: false, enabled: true, foreground: false, deadline: deadline, now: instant))
         XCTAssertNoThrow(try DoorUnlockPolicy.validate(background: false, enabled: false, foreground: true, deadline: deadline, now: instant))
     }
@@ -74,5 +74,439 @@ final class DoorProtocolTests: XCTestCase {
         XCTAssertThrowsError(try key.validate(at: DoorKey.parseDate("2027-02-01T00:00:00Z")!))
         XCTAssertThrowsError(try key.validate(at: DoorKey.parseDate("2025-12-01T00:00:00Z")!))
         XCTAssertThrowsError(try DoorProtocol.unlock(key, session: 0, minorVersion: 0x99, now: now))
+    }
+
+    private func response(opcode: UInt8 = 6, session: UInt16 = 0x1234, result: UInt8 = 0,
+                          extra: [UInt8] = []) -> [UInt8] {
+        let body: [UInt8] = [0x3B, UInt8(4 + extra.count), opcode] + DoorProtocol.be16(session) + [result] + extra
+        return body + DoorProtocol.be16(DoorProtocol.checksum(body + [0xA1]))
+    }
+
+    private func selectedExchange() -> DoorExchange {
+        var exchange = DoorExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 1))
+        XCTAssertNotNil(exchange.acceptSelection(response(opcode: 1)))
+        return exchange
+    }
+
+    func testDecoderAcceptsEveryNotificationSplit() throws {
+        let frame = response(extra: [0, 1, 0, 0])
+        for cut in 1..<frame.count {
+            var decoder = DoorResponseDecoder()
+            XCTAssertTrue(try decoder.append(Data(frame.prefix(cut))).isEmpty)
+            XCTAssertEqual(try decoder.append(Data(frame.dropFirst(cut))), [frame])
+            XCTAssertTrue(decoder.buffered.isEmpty)
+        }
+    }
+
+    func testDecoderAcceptsCoalescedFramesAndLeadingNoise() throws {
+        let frames = [response(opcode: 1), response(result: 4)]
+        var decoder = DoorResponseDecoder()
+        XCTAssertEqual(try decoder.append(Data([0x42, 0x19] + frames.flatMap { $0 })), frames)
+    }
+
+    func testDecoderSkipsImpossibleLengthWithoutBlockingNextFrame() throws {
+        let frame = response()
+        var decoder = DoorResponseDecoder()
+        XCTAssertEqual(try decoder.append(Data([0x3B, 0xFF, 6] + frame)), [frame])
+    }
+
+    func testDecoderResynchronizesAfterChecksumDamage() throws {
+        let frame = response()
+        var damaged = frame; damaged[damaged.count - 1] ^= 1
+        var decoder = DoorResponseDecoder()
+        XCTAssertEqual(try decoder.append(Data(damaged + frame)), [frame])
+    }
+
+    func testIncompletePlausibleLengthIsRecoveredOnlyAfterFragmentTimeout() throws {
+        let frame = response()
+        var decoder = DoorResponseDecoder()
+        XCTAssertTrue(try decoder.append(Data([0x3B, 32, 6] + frame)).isEmpty)
+        XCTAssertEqual(try decoder.recoverStalledFragment(), [frame])
+    }
+
+    func testExtendedSelectionRetainsFirmwareAndVoltageFields() {
+        var exchange = DoorExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 1))
+        let selection = exchange.acceptSelection(response(opcode: 1, extra: [1, 0x21, 1, 0xF4, 0, 0, 0, 0]))
+        XCTAssertEqual(selection?.minorVersion, 0x21)
+        XCTAssertEqual(selection?.voltage, 5.0)
+    }
+
+    func testDecoderPreservesHeaderByteInsidePartialPayload() throws {
+        let frame = response(extra: [0x3B, 8, 6, 0])
+        var decoder = DoorResponseDecoder()
+        XCTAssertTrue(try decoder.append(Data(frame.prefix(8))).isEmpty)
+        XCTAssertEqual(try decoder.append(Data(frame.dropFirst(8))), [frame])
+    }
+
+    func testChecksumValidShortReplyCannotReportUnlockSuccess() throws {
+        var short: [UInt8] = []
+        for session in UInt32(0)...UInt32(UInt16.max) {
+            let body: [UInt8] = [0x3B, 3, 6] + DoorProtocol.be16(UInt16(session))
+            let crc = DoorProtocol.checksum(body + [0xA1])
+            if crc >> 8 == 0 { short = body + DoorProtocol.be16(crc); break }
+        }
+        XCTAssertEqual(short.count, 7)
+        XCTAssertTrue(DoorProtocol.validResponse(short))
+        var exchange = selectedExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 6))
+        XCTAssertNil(exchange.unlockResult(short))
+        var decoder = DoorResponseDecoder()
+        XCTAssertTrue(try decoder.append(Data(short)).isEmpty)
+    }
+
+    func testReplyCannotCompleteBeforeActualUnlockSubmission() {
+        var exchange = selectedExchange()
+        XCTAssertFalse(exchange.unlockSubmitted)
+        XCTAssertNil(exchange.unlockResult(response()))
+        XCTAssertTrue(exchange.markSubmitted(opcode: 6))
+        XCTAssertEqual(exchange.unlockResult(response()), 0)
+    }
+
+    func testSelectionCannotAdvanceWithoutSubmissionAndRejectsZeroSession() {
+        var exchange = DoorExchange()
+        XCTAssertNil(exchange.acceptSelection(response(opcode: 1)))
+        XCTAssertFalse(exchange.markSubmitted(opcode: 6))
+        XCTAssertTrue(exchange.markSubmitted(opcode: 1))
+        XCTAssertNil(exchange.acceptSelection(response(opcode: 1, session: 0)))
+        XCTAssertNotNil(exchange.acceptSelection(response(opcode: 1)))
+        XCTAssertNil(exchange.acceptSelection(response(opcode: 1)))
+    }
+
+    func testUnlockCommandCannotBeAutomaticallySubmittedTwice() {
+        var exchange = selectedExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 6))
+        XCTAssertFalse(exchange.markSubmitted(opcode: 6))
+        XCTAssertFalse(exchange.markSubmitted(opcode: 1))
+    }
+
+    func testCancelledExchangeDoesNotAcceptOldRepliesBeforeNewSubmission() {
+        var exchange = selectedExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 6))
+        exchange.reset()
+        XCTAssertNil(exchange.unlockResult(response()))
+        XCTAssertNil(exchange.acceptSelection(response(opcode: 1)))
+    }
+
+    func testUnlockFailureResultIsPreserved() {
+        var exchange = selectedExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 6))
+        XCTAssertEqual(exchange.unlockResult(response(result: 4)), 4)
+    }
+
+    func testSessionRefreshRemainsCompatibleWithOriginalClient() {
+        var exchange = selectedExchange()
+        XCTAssertTrue(exchange.markSubmitted(opcode: 6))
+        XCTAssertEqual(exchange.unlockResult(response(session: 0x5678)), 0)
+    }
+
+    func testDecoderRejectsOversizedInputAndCanBeReset() throws {
+        var decoder = DoorResponseDecoder()
+        XCTAssertThrowsError(try decoder.append(Data(repeating: 0x3B, count: 1025)))
+        decoder.reset()
+        XCTAssertEqual(try decoder.append(Data(response())), [response()])
+    }
+
+    func testStrictTimezonePreservesPositiveAndNegativeOffsets() {
+        for (text, expected) in [("+08:00", 28800), ("-00:30", -1800), ("+14:00", 50400), ("-12:00", -43200)] {
+            var changed = key; changed.timezone = text
+            XCTAssertEqual(changed.timeZone?.secondsFromGMT(), expected)
+        }
+    }
+
+    func testMalformedAndHugeTimezoneInputsAreRejectedWithoutArithmeticOverflow() {
+        for text in ["9223372036854775807:00", "+08::00", "08:00", "+8:00", "+14:01", "+15:00", "+00:60", "+AA:00"] {
+            var changed = key; changed.timezone = text
+            XCTAssertNil(changed.timeZone, text)
+            XCTAssertThrowsError(try changed.validate(at: now), text)
+        }
+    }
+
+    func testMonotonicDeadlineRejectsExactBoundary() {
+        let deadline = ContinuousClock().now
+        XCTAssertThrowsError(try DoorUnlockPolicy.validate(background: true, enabled: true, foreground: false,
+                                                          deadline: deadline, now: deadline))
+    }
+
+    func testClockRollbackRecordIsScopedToAuthorization() {
+        let record = DoorClockRecord(authorization: key.authorizationIdentity, submittedAt: now)
+        XCTAssertTrue(record.blocks(key, at: now.addingTimeInterval(-60)))
+        XCTAssertFalse(record.blocks(key, at: now.addingTimeInterval(1)))
+        var renewed = key; renewed.seqNo += 1
+        XCTAssertFalse(record.blocks(renewed, at: now.addingTimeInterval(-60)))
+        XCTAssertEqual(renewed.connectionIdentity, key.connectionIdentity)
+        renewed.devID += 1
+        XCTAssertNotEqual(renewed.connectionIdentity, key.connectionIdentity)
+    }
+
+    func testImportDecoderAcceptsBOMAndRejectsOversizedOrInvalidJSON() throws {
+        var imported = key
+        imported.validFrom = "2000-01-01T00:00:00Z"
+        imported.validUntil = "2127-01-01T00:00:00Z"
+        let json = try JSONEncoder().encode(imported)
+        XCTAssertEqual(try DoorKeyImporter.decode(Data([0xEF, 0xBB, 0xBF]) + json).deviceID, imported.deviceID)
+        XCTAssertThrowsError(try DoorKeyImporter.decode(Data(repeating: 0x20, count: 65537)))
+        XCTAssertThrowsError(try DoorKeyImporter.decode(Data("{}".utf8)))
+    }
+
+    private var shortSelection: DoorResponseSession.Event {
+        .selected(DoorExchange.Selection(session: 0x1234, minorVersion: 0, voltage: nil))
+    }
+
+    private func selectedResponseSession() throws -> DoorResponseSession {
+        var session = DoorResponseSession()
+        XCTAssertTrue(session.markSubmitted(opcode: 1))
+        XCTAssertEqual(try session.append(Data(response(opcode: 1))), [shortSelection])
+        return session
+    }
+
+    func testCoalescedReplyKeepsItsPreSubmissionClassification() throws {
+        var session = DoorResponseSession()
+        XCTAssertTrue(session.markSubmitted(opcode: 1))
+        let events = try session.append(Data(response(opcode: 1) + response()))
+        XCTAssertEqual(events.first, shortSelection)
+        // The controller handles the selection by submitting unlock. The
+        // remaining event must already be classified against receive-time state.
+        XCTAssertTrue(session.markSubmitted(opcode: 6))
+        XCTAssertEqual(Array(events.dropFirst()), [.ignored(opcode: 6)])
+        XCTAssertEqual(try session.append(Data(response())), [.unlockResult(0)])
+    }
+
+    func testEveryPreSubmissionPartialReplyIsIsolatedAtWrite() throws {
+        let stale = response()
+        for cut in 1..<stale.count {
+            var session = DoorResponseSession()
+            XCTAssertTrue(session.markSubmitted(opcode: 1))
+            XCTAssertEqual(try session.append(Data(response(opcode: 1) + Array(stale.prefix(cut)))), [shortSelection])
+            XCTAssertEqual(session.buffered, Array(stale.prefix(cut)))
+            XCTAssertTrue(session.markSubmitted(opcode: 6))
+            XCTAssertTrue(session.buffered.isEmpty)
+            XCTAssertEqual(session.discardedBytes, cut)
+            XCTAssertTrue(try session.append(Data(stale.dropFirst(cut))).isEmpty)
+            XCTAssertEqual(try session.append(Data(response())), [.unlockResult(0)])
+        }
+    }
+
+    func testFlowControlledUnlockRejectsRepliesUntilActualWrite() throws {
+        var session = try selectedResponseSession()
+        XCTAssertFalse(session.unlockSubmitted)
+        XCTAssertEqual(try session.append(Data(response())), [.ignored(opcode: 6)])
+        XCTAssertTrue(try session.append(Data(response().prefix(6))).isEmpty)
+        XCTAssertEqual(session.buffered.count, 6)
+        XCTAssertTrue(session.markSubmitted(opcode: 6))
+        XCTAssertTrue(session.buffered.isEmpty)
+        XCTAssertTrue(try session.append(Data(response().suffix(2))).isEmpty)
+        XCTAssertEqual(try session.append(Data(response(result: 4))), [.unlockResult(4)])
+    }
+
+    func testRecoveredBatchCannotTurnAnOldReplyIntoSuccess() throws {
+        var session = DoorResponseSession()
+        XCTAssertTrue(session.markSubmitted(opcode: 1))
+        let stalled = [UInt8(0x3B), 32, 6] + response(opcode: 1) + response()
+        XCTAssertTrue(try session.append(Data(stalled)).isEmpty)
+        let events = try session.recoverStalledFragment()
+        XCTAssertEqual(events, [shortSelection, .ignored(opcode: 6)])
+        XCTAssertTrue(session.markSubmitted(opcode: 6))
+        XCTAssertEqual(try session.append(Data(response())), [.unlockResult(0)])
+    }
+
+    func testGenuinePostSubmissionReplyStillAcceptsEverySplit() throws {
+        let reply = response(session: 0x5678, extra: [0x3B, 8, 6, 0])
+        for cut in 1..<reply.count {
+            var session = try selectedResponseSession()
+            XCTAssertTrue(session.markSubmitted(opcode: 6))
+            XCTAssertTrue(try session.append(Data(reply.prefix(cut))).isEmpty)
+            XCTAssertEqual(try session.append(Data(reply.dropFirst(cut))), [.unlockResult(0)])
+        }
+    }
+
+    func testPreSelectionFragmentCannotCarryIntoSubmittedSelection() throws {
+        var session = DoorResponseSession()
+        let selection = response(opcode: 1)
+        XCTAssertTrue(try session.append(Data(selection.prefix(6))).isEmpty)
+        XCTAssertTrue(session.markSubmitted(opcode: 1))
+        XCTAssertTrue(session.buffered.isEmpty)
+        XCTAssertTrue(try session.append(Data(selection.suffix(2))).isEmpty)
+        XCTAssertEqual(try session.append(Data(selection)), [shortSelection])
+    }
+
+    func testResponseSessionResetRequiresFreshSubmission() throws {
+        var session = try selectedResponseSession()
+        XCTAssertTrue(session.markSubmitted(opcode: 6))
+        XCTAssertTrue(try session.append(Data(response().prefix(6))).isEmpty)
+        session.reset()
+        XCTAssertTrue(session.buffered.isEmpty)
+        XCTAssertFalse(session.unlockSubmitted)
+        XCTAssertEqual(try session.append(Data(response())), [.ignored(opcode: 6)])
+        XCTAssertFalse(session.markSubmitted(opcode: 6))
+    }
+
+    private func pickerFixture(_ data: Data = Data("{}".utf8)) throws -> (root: URL, picker: URL, file: URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BenbenDoorCopyTests-\(UUID().uuidString)", isDirectory: true)
+        let picker = root.appendingPathComponent("picker", isDirectory: true)
+        try FileManager.default.createDirectory(at: picker, withIntermediateDirectories: true)
+        let file = picker.appendingPathComponent("key.json")
+        try data.write(to: file)
+        return (root, picker, file)
+    }
+
+    @MainActor
+    func testOwnedImportCopyReadsAndCleansWithoutRemovingOriginal() async throws {
+        var imported = key
+        imported.validFrom = "2000-01-01T00:00:00Z"
+        imported.validUntil = "2127-01-01T00:00:00Z"
+        let data = try JSONEncoder().encode(imported)
+        let fixture = try pickerFixture(data)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let original = fixture.root.appendingPathComponent("original.json")
+        try data.write(to: original)
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.file.path))
+        let outcome = await copy.consume { try DoorKeyImporter.read(copy.url) }
+        XCTAssertEqual(try outcome.result.get().deviceID, imported.deviceID)
+        XCTAssertNil(outcome.cleanupError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.deletingLastPathComponent().path))
+        XCTAssertEqual(try Data(contentsOf: original), data)
+    }
+
+    @MainActor
+    func testInvalidImportCopyIsCleanedAfterDecodeFailure() async throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        let outcome = await copy.consume { try DoorKeyImporter.read(copy.url) }
+        XCTAssertThrowsError(try outcome.result.get())
+        XCTAssertNil(outcome.cleanupError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
+    }
+
+    @MainActor
+    func testImportCopyIsCleanedWhenImportDeclinesBeforeReading() async throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        let outcome = await copy.consume { false }
+        XCTAssertFalse(try outcome.result.get())
+        XCTAssertNil(outcome.cleanupError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
+    }
+
+    @MainActor
+    func testAlreadyCancelledImportCleansWithoutStartingRead() async throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        var invoked = false
+        let task = Task { @MainActor in
+            await copy.consume { invoked = true; return true }
+        }
+        task.cancel()
+        let outcome = await task.value
+        XCTAssertFalse(invoked)
+        XCTAssertThrowsError(try outcome.result.get()) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertNil(outcome.cleanupError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
+    }
+
+    @MainActor
+    func testCancellationWaitsForActualReadBeforeRemovingCopy() async throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        let started = expectation(description: "read is using the owned copy")
+        var resumeRead: CheckedContinuation<Void, Never>?
+        let task = Task { @MainActor in
+            await copy.consume {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    resumeRead = continuation
+                    started.fulfill()
+                }
+                try Task.checkCancellation()
+                return true
+            }
+        }
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.url.path))
+        task.cancel()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.url.path))
+        let continuation = try XCTUnwrap(resumeRead)
+        continuation.resume()
+        let outcome = await task.value
+        XCTAssertThrowsError(try outcome.result.get()) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertNil(outcome.cleanupError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
+    }
+
+    func testUnownedAndPrefixSiblingFilesCannotBeClaimedOrDeleted() throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let sibling = fixture.root.appendingPathComponent("picker-other", isDirectory: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: false)
+        let original = sibling.appendingPathComponent("original.json")
+        let data = Data("preserve this user file".utf8)
+        try data.write(to: original)
+        XCTAssertThrowsError(try DoorKeyImportCopy.claimPickerCopy(original, allowedRoots: [fixture.picker]))
+        XCTAssertEqual(try Data(contentsOf: original), data)
+    }
+
+    func testDirectoryAndSymlinkCannotTransferDeletionRights() throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let directory = fixture.picker.appendingPathComponent("folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try DoorKeyImportCopy.claimPickerCopy(directory, allowedRoots: [fixture.picker]))
+        let original = fixture.root.appendingPathComponent("original.json")
+        try Data("preserve".utf8).write(to: original)
+        let link = fixture.picker.appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+        XCTAssertThrowsError(try DoorKeyImportCopy.claimPickerCopy(link, allowedRoots: [fixture.picker]))
+        XCTAssertEqual(try Data(contentsOf: original), Data("preserve".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @MainActor
+    func testCleanupFailurePreservesSuccessfulImportResult() async throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        defer { try? FileManager.default.removeItem(at: copy.url.deletingLastPathComponent()) }
+        let outcome = await copy.consume(removeItem: { _ in throw NSError(domain: "SyntheticCleanup", code: 1) }) { true }
+        XCTAssertTrue(try outcome.result.get())
+        XCTAssertEqual((outcome.cleanupError as NSError?)?.domain, "SyntheticCleanup")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.url.path))
+    }
+
+    @MainActor
+    func testDuplicatePickerClaimCannotRemoveActiveCopy() async throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let copy = try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker])
+        XCTAssertThrowsError(try DoorKeyImportCopy.claimPickerCopy(fixture.file, allowedRoots: [fixture.picker]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.url.path))
+        let outcome = await copy.consume { true }
+        XCTAssertTrue(try outcome.result.get())
+        XCTAssertNil(outcome.cleanupError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
+    }
+
+    func testStartupCleanupRemovesOnlyOwnedImportDirectories() throws {
+        let fixture = try pickerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let owned = fixture.root.appendingPathComponent("BenbenDoorImport-\(UUID().uuidString)", isDirectory: true)
+        let unrelated = fixture.root.appendingPathComponent("BenbenDoorImport-not-a-uuid", isDirectory: true)
+        let namedFile = fixture.root.appendingPathComponent("BenbenDoorImport-\(UUID().uuidString)")
+        let link = fixture.root.appendingPathComponent("BenbenDoorImport-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: owned, withIntermediateDirectories: false)
+        try Data("test configuration".utf8).write(to: owned.appendingPathComponent("configuration.json"))
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: false)
+        try Data("preserve".utf8).write(to: namedFile)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.picker)
+        XCTAssertTrue(DoorKeyImportCopy.cleanupAbandonedCopies(in: fixture.root).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owned.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: namedFile.path))
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), fixture.picker.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.file.path))
     }
 }
