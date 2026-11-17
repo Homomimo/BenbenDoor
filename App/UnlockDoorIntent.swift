@@ -10,21 +10,21 @@ struct UnlockDoorIntent: AppIntent {
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         let door = BluetoothDoor.shared
-        door.recordShortcutEvent("动作已进入，版本 1.2.3 Build 6")
+        door.recordShortcutEvent("已开始执行蓝牙开门，版本 1.3.0 Build 8")
         guard KeyStore.backgroundUnlockEnabled else {
-            door.recordShortcutEvent("退出：后台开关未开启")
+            door.recordShortcutEvent("无法开门：尚未开启锁屏快捷开门")
             throw DoorError.message("请先打开奔奔开门，在设置中开启“允许锁屏快捷开门”。")
         }
         guard CBManager.authorization == .allowedAlways else {
-            door.recordShortcutEvent("退出：蓝牙授权尚未完成")
+            door.recordShortcutEvent("无法开门：尚未允许 App 使用蓝牙")
             throw DoorError.message("请先在奔奔开门 App 内允许蓝牙访问，并完成一次前台开门测试。")
         }
         do {
             let message = try await door.unlockFromShortcut()
-            door.recordShortcutEvent("动作返回成功")
+            door.recordShortcutEvent("本次开门已完成")
             return .result(dialog: IntentDialog(stringLiteral: message))
         } catch {
-            door.recordShortcutEvent("动作返回失败：\(error.localizedDescription)")
+            door.recordShortcutEvent("本次开门未成功：\(error.localizedDescription)")
             throw error
         }
     }

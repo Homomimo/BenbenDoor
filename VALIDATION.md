@@ -54,6 +54,20 @@
 - Request validity is 25 seconds; process suspension can delay watchdog execution and shortcut completion. Expired operations are rejected when execution resumes.
 - This revision has not been compiled with Xcode or verified on an iPhone. Ten XCTest methods remain pending macOS execution.
 
+## Readable logs 1.2.4 Build 7
+
+- Replaced numeric Bluetooth and application state messages with Chinese descriptions and explained connection, communication confirmation, writes and door replies in plain language.
+- Retained request IDs, error codes and signal readings for troubleshooting. A write acknowledgement is explicitly distinguished from confirmed door success.
+- Checked all known Bluetooth state mappings and raw-packet persistence filtering locally. No protocol, timeout or connection-policy changes in this revision.
+- Swift compilation and iPhone display verification remain pending.
+
+## Native Control Center button 1.3.0 Build 8
+
+- Added an iOS 18+ StaticControlConfiguration with ControlWidgetButton, registered alongside the original widget in a WidgetBundle.
+- Included ControlDoorIntent in app and extension targets; app-only ForegroundContinuableIntent conformance routes to the app implementation, which awaits the existing unlock intent. Extension fallback explicitly throws instead of reporting success.
+- Checked source target membership and extension compilation flags. No shared Keychain or additional Bluetooth controller was added to the extension.
+- Xcode compilation, control gallery registration, process routing, lock-screen authentication and physical door operation remain unverified for this feature.
+
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.

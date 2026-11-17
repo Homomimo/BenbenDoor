@@ -50,6 +50,27 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
     }
     private enum Stage { case idle, waitingBluetooth, scanning, connecting, disconnectingForScan, discovering, selecting, unlocking }
 
+    private func bluetoothDescription(_ state: CBManagerState) -> String {
+        switch state {
+        case .unknown: return "正在检查蓝牙"
+        case .resetting: return "蓝牙正在重新初始化，请稍候"
+        case .unsupported: return "此设备不支持所需蓝牙功能"
+        case .unauthorized: return "尚未允许 App 使用蓝牙，请检查系统设置"
+        case .poweredOff: return "蓝牙已关闭，请打开蓝牙"
+        case .poweredOn: return "蓝牙已开启，可以寻找门锁"
+        @unknown default: return "暂时无法识别蓝牙状态（诊断编号 \(state.rawValue)）"
+        }
+    }
+
+    private var appStateDescription: String {
+        switch UIApplication.shared.applicationState {
+        case .active: return "App 正在前台使用"
+        case .inactive: return "App 正在切换状态"
+        case .background: return "App 正在后台运行"
+        @unknown default: return "App 运行状态暂时未知"
+        }
+    }
+
     override init() {
         super.init()
         log = UserDefaults.standard.stringArray(forKey: "recentDoorDiagnostics") ?? []
@@ -178,7 +199,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         }
         backgroundOperation = background
         completion = callback; requestID = id; requestTag = String(id.uuidString.prefix(4)); unlockWriteStarted = false
-        append("开始请求，来源=\(background ? "快捷指令" : "App")，应用状态=\(UIApplication.shared.applicationState.rawValue)，蓝牙状态=\(central.state.rawValue)")
+        append("收到开门请求，来自\(background ? "快捷指令" : "App 按钮或小组件")；\(appStateDescription)；\(bluetoothDescription(central.state))")
         do {
             guard let stored = try KeyStore.load() else {
                 throw DoorError.message("请先导入门锁配置。")
@@ -206,7 +227,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
                 backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BenbenDoorUnlock") { [weak self] in
                     self?.finish("系统结束了后台执行时间，请在 App 内确认并重试。", success: false)
                 }
-                append(backgroundTask == .invalid ? "系统未分配附加后台任务时间；继续依赖当前 Intent 执行时段" : "已申请有限后台任务时间")
+                append(backgroundTask == .invalid ? "系统未提供额外后台时间，将在本次快捷指令运行期间尝试开门" : "已向系统申请后台运行时间，等待门锁连接")
             }
             append("开始开门：\(stored.displayName)")
             if central.state == .poweredOn { scan() }
@@ -269,24 +290,24 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
            let text = UserDefaults.standard.string(forKey: "rememberedDoorPeripheral"),
            let id = UUID(uuidString: text),
            let known = central.retrievePeripherals(withIdentifiers: [id]).first {
-            append("找到前台成功开门记录，优先直接重连")
+            append("已找到上次成功连接的门锁，尝试直接连接")
             connect(known, remembered: true)
             return
         }
-        if backgroundOperation { append("没有可恢复设备，回退到 FFF0 扫描；请先用新版 App 成功开门一次") }
+        if backgroundOperation { append("暂无可用的门锁连接记录，开始搜索附近门锁；成功开门后会自动记住设备") }
         scanForDoor()
     }
 
     private func scanForDoor() {
         guard requestIsCurrent(), let key else { return }
-        stage = .scanning; status = "正在寻找 \(key.advertisedName)…"; append("开始扫描 FFF0 服务")
+        stage = .scanning; status = "正在寻找门锁…"; append("正在搜索附近的目标门锁（设备名：\(key.advertisedName)）")
         central.scanForPeripherals(withServices: [CBUUID(string: DoorProtocol.serviceUUID)],
                                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
         armTimeout(DoorTimeout.scan, message: "未找到目标门锁，请靠近门锁并确认设备已唤醒。")
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        append("蓝牙状态更新：\(central.state.rawValue)")
+        append(bluetoothDescription(central.state))
         guard requestIsCurrent() else { return }
         switch central.state {
         case .poweredOn: if stage == .waitingBluetooth { scan() }
@@ -302,7 +323,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         guard requestIsCurrent(), stage == .scanning, let key else { return }
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? found.name ?? ""
         guard name == key.advertisedName else { return }
-        append("发现目标，RSSI \(RSSI)")
+        append("已找到目标门锁，准备连接（信号读数：\(RSSI) dBm）")
         connect(found, remembered: false)
     }
 
@@ -311,6 +332,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         central.stopScan(); stage = .connecting; peripheral = found; found.delegate = self
         usingRememberedPeripheral = remembered
         status = "正在连接门锁…"
+        append(status)
         central.connect(found, options: nil)
         if remembered {
             timeout?.cancel()
@@ -327,7 +349,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
 
     private func fallbackToScan() {
         guard requestIsCurrent(), stage == .connecting else { return }
-        append("已记录设备重连未完成，回退扫描")
+        append("直接连接未成功，改为搜索附近的门锁")
         timeout?.cancel(); timeout = nil
         usingRememberedPeripheral = false
         // Wait for cancellation before scanning, so an old disconnect callback
@@ -349,9 +371,9 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         guard requestIsCurrent(), stage == .connecting, self.peripheral === peripheral else { return }
-        stage = .discovering; status = "正在准备蓝牙通道…"; append("已连接，发现服务")
+        stage = .discovering; status = "已连接，正在准备通信…"; append("已连接门锁，正在准备发送指令和接收回复")
         peripheral.discoverServices([CBUUID(string: DoorProtocol.serviceUUID)])
-        armTimeout(DoorTimeout.discovery, message: "服务或通知初始化超时。")
+        armTimeout(DoorTimeout.discovery, message: "已连接，但通信准备超时，请靠近门锁后重试。")
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -361,7 +383,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         if usingRememberedPeripheral { fallbackToScan(); return }
         if let error {
             let nsError = error as NSError
-            append("连接失败诊断：domain=\(nsError.domain), code=\(nsError.code)")
+            append("连接失败的诊断信息：错误类型 \(nsError.domain)，错误编号 \(nsError.code)")
         }
         finish("连接失败：\(error?.localizedDescription ?? "未知原因")", success: false)
     }
@@ -376,7 +398,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         guard requestIsCurrent(), self.peripheral === peripheral, stage == .discovering else { return }
         if let error { finish(error.localizedDescription, success: false); return }
         guard let service = peripheral.services?.first(where: { $0.uuid == CBUUID(string: DoorProtocol.serviceUUID) }) else {
-            finish("未找到 FFF0 服务。", success: false); return
+            finish("门锁未提供所需通信服务，无法继续开门（诊断：FFF0）。", success: false); return
         }
         peripheral.discoverCharacteristics([CBUUID(string: DoorProtocol.writeUUID), CBUUID(string: DoorProtocol.notifyUUID)], for: service)
     }
@@ -389,19 +411,19 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         guard let writeCharacteristic, let notifyCharacteristic,
               writeCharacteristic.properties.contains(.write) || writeCharacteristic.properties.contains(.writeWithoutResponse),
               notifyCharacteristic.properties.contains(.notify) || notifyCharacteristic.properties.contains(.indicate) else {
-            finish("FFF1/FFF2 特征缺失或属性不兼容。", success: false); return
+            finish("门锁的指令发送或回复通道不可用（诊断：FFF1/FFF2）。", success: false); return
         }
-        append("已发现写入与通知特征")
+        append("已找到指令发送和门锁回复通道，正在开启回复接收")
         peripheral.setNotifyValue(true, for: notifyCharacteristic)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         guard requestIsCurrent(), self.peripheral === peripheral, stage == .discovering, characteristic.uuid == CBUUID(string: DoorProtocol.notifyUUID) else { return }
         guard error == nil, characteristic.isNotifying, let key else {
-            finish("开启通知失败：\(error?.localizedDescription ?? "未生效")", success: false); return
+            finish("无法接收门锁回复：\(error?.localizedDescription ?? "门锁未开启回复通道")", success: false); return
         }
-        stage = .selecting; status = "正在与门锁握手…"; append("通知已开启，发送选锁")
-        armTimeout(DoorTimeout.select, message: "选锁未收到有效响应。")
+        stage = .selecting; status = "正在确认门锁通信…"; append("已开启回复接收，正在向门锁发起通信确认")
+        armTimeout(DoorTimeout.select, message: "门锁未回复通信确认，请靠近门锁后重试。")
         write(DoorProtocol.select(key))
     }
 
@@ -423,7 +445,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         if type == .withoutResponse && !peripheral.canSendWriteWithoutResponse {
             pendingWrite = value; return
         }
-        append("TX \(value.count) 字节" + (includePacketBytes ? "：\(value.map { String(format: "%02X", $0) }.joined(separator: " "))" : ""))
+        append("正在发送\(stage == .unlocking ? "开门指令" : "通信确认指令")，\(value.count) 字节" + (includePacketBytes ? "：\(value.map { String(format: "%02X", $0) }.joined(separator: " "))" : ""))
         peripheral.writeValue(value, for: characteristic, type: type)
     }
 
@@ -435,16 +457,16 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard requestIsCurrent(), self.peripheral === peripheral else { return }
         if let error { finish("蓝牙写入失败：\(error.localizedDescription)", success: false) }
-        else { append("控制器已确认写入，等待门锁业务响应") }
+        else { append("蓝牙已确认指令写入，正在等待门锁处理结果；此时尚不能确认开门成功") }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard requestIsCurrent(), self.peripheral === peripheral, characteristic.uuid == CBUUID(string: DoorProtocol.notifyUUID) else { return }
         if let error { finish("接收失败：\(error.localizedDescription)", success: false); return }
         guard let value = characteristic.value else { return }
-        append("RX \(value.count) 字节" + (includePacketBytes ? "：\(value.map { String(format: "%02X", $0) }.joined(separator: " "))" : ""))
+        append("收到门锁回复，\(value.count) 字节" + (includePacketBytes ? "：\(value.map { String(format: "%02X", $0) }.joined(separator: " "))" : ""))
         receiveBuffer += value
-        if receiveBuffer.count > 1024 { finish("响应缓冲区超限。", success: false); return }
+        if receiveBuffer.count > 1024 { finish("门锁回复数据过多，已停止本次操作，请重试。", success: false); return }
         while receiveBuffer.count >= 2 && isBusy {
             guard let head = receiveBuffer.firstIndex(of: 0x3B) else { receiveBuffer.removeAll(); return }
             if head > 0 { receiveBuffer.removeFirst(head) }
@@ -454,7 +476,7 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
             guard receiveBuffer.count >= length else { return }
             let frame = Array(receiveBuffer.prefix(length))
             guard DoorProtocol.validResponse(frame) else {
-                append("忽略校验不通过的响应")
+                append("收到的回复未通过完整性检查，已忽略，继续等待有效回复")
                 receiveBuffer.removeFirst(); continue
             }
             receiveBuffer.removeFirst(length)
@@ -467,13 +489,13 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
         if stage == .selecting && opcode == 1 {
             let session = UInt16(frame[3]) << 8 | UInt16(frame[4])
             guard session != 0, frame[1] == 12 || frame[1] == 4, let key else {
-                finish("选锁响应不支持或会话参数无效。", success: false); return
+                finish("门锁的通信确认回复无效，无法继续开门，请重试。", success: false); return
             }
             let minor: UInt8 = frame[1] == 12 ? frame[7] : 0
             if frame[1] == 12 {
                 let voltage = Double(UInt16(frame[8]) << 8 | UInt16(frame[9])) / 100
-                append("选锁成功，固件 minor=\(minor)，电压 \(voltage)V")
-            } else { append("选锁完成（简短响应）") }
+                append("门锁通信确认完成，准备开门（电压 \(voltage)V；诊断版本编号 \(minor)）")
+            } else { append("门锁通信确认完成，准备开门（简短回复）") }
             do {
                 guard backgroundOperation || UIApplication.shared.applicationState == .active else { throw DoorError.message("请保持 App 在前台。") }
                 if backgroundOperation && !KeyStore.backgroundUnlockEnabled { throw DoorError.message("锁屏快捷开门已关闭。") }
@@ -491,12 +513,12 @@ final class BluetoothDoor: NSObject, ObservableObject, CBCentralManagerDelegate,
                 if let key, let peripheral {
                     UserDefaults.standard.set(key.advertisedName, forKey: "rememberedDoorName")
                     UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: "rememberedDoorPeripheral")
-                    append("已记录成功开门设备，可用于下次直接重连")
+                    append("已记住这把门锁，下次可尝试直接连接")
                 }
                 finish("门锁返回开门成功", success: true)
             }
             else if result == 4 { finish("开门失败：门锁已反锁（结果码 4）。", success: false) }
             else { finish("门锁拒绝开门，结果码 \(result)。", success: false) }
-        } else { append("忽略当前阶段以外的业务响应：\(opcode)") }
+        } else { append("收到与当前步骤无关的门锁回复，已忽略（诊断指令编号 \(opcode)）") }
     }
 }
