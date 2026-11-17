@@ -72,9 +72,12 @@ struct BenbenDoorWidget: Widget {
 @available(iOS 18.0, *)
 struct BenbenDoorControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.benbendoor.control.unlock") {
-            ControlWidgetButton(action: ControlDoorIntent()) {
-                Label("奔奔开门", systemImage: "lock.open.fill")
+        StaticControlConfiguration(kind: "com.benbendoor.control.unlock.v2") {
+            ControlWidgetButton("奔奔开门", action: ControlDoorIntent()) { isActive in
+                Image(systemName: "key.fill")
+                if isActive {
+                    Text("正在开门…")
+                }
             }
         }
         .displayName("奔奔开门")

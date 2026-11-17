@@ -1,10 +1,17 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import WidgetKit
 
 @main
 struct BenbenDoorApp: App {
     @StateObject private var door = BluetoothDoor.shared
+
+    init() {
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadAllControls()
+        }
+    }
     var body: some Scene {
         WindowGroup { DoorView().environmentObject(door) }
     }
@@ -209,7 +216,7 @@ struct DoorView: View {
                     Label("在 App 或桌面小组件中一键开门", systemImage: "hand.tap")
                     Label("首次使用请允许蓝牙访问", systemImage: "antenna.radiowaves.left.and.right")
                     Label("钥匙仅保存在此设备", systemImage: "iphone")
-                    Text("版本 1.3.0 · Build 8").font(.footnote).foregroundStyle(.secondary)
+                    Text("版本 1.3.1 · Build 9").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Toggle("允许锁屏快捷开门", isOn: Binding(get: { backgroundUnlock }, set: { enabled in

@@ -68,6 +68,14 @@
 - Checked source target membership and extension compilation flags. No shared Keychain or additional Bluetooth controller was added to the extension.
 - Xcode compilation, control gallery registration, process routing, lock-screen authentication and physical door operation remain unverified for this feature.
 
+## Control Center revision 1.3.1 Build 9
+
+- User reports blank control icon and no app entry log when tapping on iOS 27.3 beta 1. The exact runtime cause is not proven.
+- Added supportedModes to both control intent builds, re-enabled discoverability and added SDK-gated iOS 27 main-app execution targeting. Build scripts enable the new gate only when the installed SDK supports it.
+- Changed the control to an explicit title, key symbol and running caption, used a new control kind, and reload controls on app launch. The old Label initializer is also a documented supported API; this is not proof that its usage caused the blank icon.
+- Added archive checks that both app and extension contain control intent metadata. These checks require the macOS archive and have not executed locally.
+- App/extension routing, icon rendering and the user's beta OS remain pending device verification. Remove the old control before adding this revision.
+
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.
