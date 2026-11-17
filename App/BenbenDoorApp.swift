@@ -216,7 +216,16 @@ struct DoorView: View {
                     Label("在 App 或桌面小组件中一键开门", systemImage: "hand.tap")
                     Label("首次使用请允许蓝牙访问", systemImage: "antenna.radiowaves.left.and.right")
                     Label("钥匙仅保存在此设备", systemImage: "iphone")
-                    Text("版本 1.3.1 · Build 9").font(.footnote).foregroundStyle(.secondary)
+                    Text("版本 1.3.2 · Build 10").font(.footnote).foregroundStyle(.secondary)
+                    #if BENBEN_IOS27_SDK
+                    if #available(iOS 27.0, *) {
+                        Text("控制中心按钮：后台开门").font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Text("控制中心按钮：打开 App 后开门").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    #else
+                    Text("控制中心按钮：打开 App 后开门").font(.footnote).foregroundStyle(.secondary)
+                    #endif
                 }
                 Section {
                     Toggle("允许锁屏快捷开门", isOn: Binding(get: { backgroundUnlock }, set: { enabled in

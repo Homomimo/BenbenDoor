@@ -72,16 +72,16 @@ struct BenbenDoorWidget: Widget {
 @available(iOS 18.0, *)
 struct BenbenDoorControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.benbendoor.control.unlock.v2") {
-            ControlWidgetButton("奔奔开门", action: ControlDoorIntent()) { isActive in
-                Image(systemName: "key.fill")
-                if isActive {
-                    Text("正在开门…")
-                }
+        StaticControlConfiguration(kind: "com.benbendoor.control.unlock.v3") {
+            ControlWidgetButton(action: ControlDoorIntent()) {
+                // A single, stable symbol label for both gallery and installed
+                // control. Control Center supplies the glass plate and contrast.
+                Label("奔奔开门", systemImage: "door.left.hand.open")
             }
+            .tint(.cyan)
         }
         .displayName("奔奔开门")
-        .description("通过蓝牙打开已配置的门锁，需先开启锁屏快捷开门。")
+        .description("一键连接门锁并开门。兼容构建会打开 App 执行；需先开启锁屏快捷开门。")
     }
 }
 

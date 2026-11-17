@@ -82,6 +82,14 @@
 - Replaced the optional empty Bash array with a nonempty quoted scalar that preserves inherited Swift flags and adds the iOS 27 SDK gate when needed.
 - Added a runner-side regression check using /bin/bash under nounset for SDK 26, 27 and 28; the workflow runs it before the Xcode build. Bash execution and Xcode compilation are not available in this Windows environment, so these checks remain pending the macOS runner.
 
+## Control Center revision 1.3.2 Build 10
+
+- User confirms the home widget displays and opens the app successfully, while the control displays only text and produces no app entry log. Control-specific rendering and routing remain unverified.
+- SDK 26 builds now explicitly foreground the app before performing the control action. SDK 27 builds on iOS 27 retain main-app-only background execution. This removes the SDK 26 background compatibility path that could dispatch into the throwing extension implementation.
+- Removed app-only deprecated ForegroundContinuableIntent conformance. Both targets now advertise matching execution modes. Existing background shortcut behavior is retained.
+- Simplified the control to a stable system door symbol Label and system tint; Control Center supplies the glass appearance. New control kind v3 requires replacing the old control. Icon root cause is not established and rendering is not verified.
+- Settings and action logs identify the routing path. Static source checks and packaging do not prove system dispatch or physical opening. Xcode and device validation remain pending.
+
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.

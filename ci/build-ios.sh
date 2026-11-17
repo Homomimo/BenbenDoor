@@ -36,7 +36,7 @@ if (( SDK_MAJOR >= 27 )); then
   CONTROL_SWIFT_FLAGS='OTHER_SWIFT_FLAGS=$(inherited) -D BENBEN_IOS27_SDK'
   echo "Control routing: iOS 27+ SDK, explicit main-app execution target"
 else
-  echo "Control routing: iOS 26 SDK, supportedModes compatibility path"
+  echo "Control routing: iOS 26 SDK, foreground app execution (not extension background)"
 fi
 printf '%s\n' "$SDK_VERSION" > build/ci/control-sdk.txt
 xcodebuild -version | tee build/ci/xcode-version.txt
