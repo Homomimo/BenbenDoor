@@ -76,6 +76,12 @@
 - Added archive checks that both app and extension contain control intent metadata. These checks require the macOS archive and have not executed locally.
 - App/extension routing, icon rendering and the user's beta OS remain pending device verification. Remove the old control before adding this revision.
 
+## Build flags correction for 1.3.1
+
+- User reports CONTROL_SWIFT_FLAGS unbound variable while running the CI build script.
+- Replaced the optional empty Bash array with a nonempty quoted scalar that preserves inherited Swift flags and adds the iOS 27 SDK gate when needed.
+- Added a runner-side regression check using /bin/bash under nounset for SDK 26, 27 and 28; the workflow runs it before the Xcode build. Bash execution and Xcode compilation are not available in this Windows environment, so these checks remain pending the macOS runner.
+
 ## Not executed here
 
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.

@@ -29,9 +29,11 @@ export DEVELOPER_DIR
 # extension's BENBEN_WIDGET_EXTENSION compilation condition.
 SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
 SDK_MAJOR="${SDK_VERSION%%.*}"
-CONTROL_SWIFT_FLAGS=()
+# A nonempty scalar also works with macOS Bash 3.2 + nounset. Expanding an
+# empty array under set -u can abort before xcodebuild even starts.
+CONTROL_SWIFT_FLAGS='OTHER_SWIFT_FLAGS=$(inherited)'
 if (( SDK_MAJOR >= 27 )); then
-  CONTROL_SWIFT_FLAGS=('OTHER_SWIFT_FLAGS=$(inherited) -D BENBEN_IOS27_SDK')
+  CONTROL_SWIFT_FLAGS='OTHER_SWIFT_FLAGS=$(inherited) -D BENBEN_IOS27_SDK'
   echo "Control routing: iOS 27+ SDK, explicit main-app execution target"
 else
   echo "Control routing: iOS 26 SDK, supportedModes compatibility path"
@@ -67,7 +69,7 @@ xcodebuild test \
   -derivedDataPath build/ci/DerivedData \
   -resultBundlePath build/ci/ProtocolTests.xcresult \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-  "${CONTROL_SWIFT_FLAGS[@]}" \
+  "$CONTROL_SWIFT_FLAGS" \
   | tee build/ci/tests.log
 
 # Device SDK, not simulator SDK: package arm64 device binaries for later signing.
@@ -77,7 +79,7 @@ xcodebuild archive \
   -archivePath build/ci/BenbenDoor.xcarchive \
   -derivedDataPath build/ci/DerivedData-device \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
-  "${CONTROL_SWIFT_FLAGS[@]}" \
+  "$CONTROL_SWIFT_FLAGS" \
   | tee build/ci/archive.log
 
 python3 ci/package-unsigned.py

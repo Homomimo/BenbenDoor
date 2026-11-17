@@ -23,6 +23,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check build flags with macOS Bash
+        run: python3 ci/test-build-flags.py
+
       - name: Run protocol tests and build unsigned IPA
         shell: bash
         run: bash ci/build-ios.sh
