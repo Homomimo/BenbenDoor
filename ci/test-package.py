@@ -92,6 +92,26 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'Simulator builds'):
             self.run_package()
 
+    def test_rejects_simulator_widget_even_with_device_app(self):
+        self.change_info(self.widget, 'CFBundleSupportedPlatforms', ['iPhoneSimulator'])
+        with self.assertRaisesRegex(AssertionError, 'Simulator builds'):
+            self.run_package()
+
+    def test_rejects_empty_missing_and_failing_test_runs(self):
+        for log in ['Executed 0 tests, with 0 failures', 'No XCTest summary',
+                    'Executed 1 test, with 1 failure\nExecuted 3 tests, with 0 failures']:
+            with self.subTest(log=log):
+                (self.root / 'build/ci/tests.log').write_text(log)
+                with self.assertRaisesRegex(AssertionError, 'XCTest'):
+                    self.run_package()
+                self.assertFalse((self.root / 'dist/BenbenDoor-unsigned.ipa').exists())
+
+    def test_zero_test_footer_does_not_hide_successful_suite(self):
+        (self.root / 'build/ci/tests.log').write_text('Executed 8 tests, with 0 failures\nExecuted 0 tests, with 0 failures')
+        self.run_package()
+        info = json.loads((self.root / 'dist/BuildInfo.json').read_text(encoding='utf-8'))
+        self.assertIn('8 tests', info['tests'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,13 +1,17 @@
 # Validation status
 
-## Review fixes 1.4.1 Build 13
+## 1.4.2 Build 14
+
+The 10-round review and device comparison procedure are in `1.4.2-十轮审核.md`. Windows checks: eight executable Python packaging regressions, static Xcode project/plist/scheme and synthetic fixture checks, seven Swift files parsed for syntax, and source ZIP byte comparison. The suite contains 56 XCTest methods (nine new); macOS CI must still compile and run them. No iPhone latency measurement, device archive or release is claimed here.
+
+## Historical: 1.4.1 Build 13
 
 - The production DoorResponseSession classifies each receive/recovery batch before controller events can submit an unlock. Actual submission discards pre-submission partial bytes; a flow-controlled command does not discard or mark submission early.
 - Added seven Swift regression cases for coalesced old results, every pre-submission split point, flow control, fragment recovery, normal reply splits, pre-selection fragments and reset. Session refresh compatibility remains unchanged. A delayed standalone reply first delivered after submission cannot be authenticated as belonging to a particular request by this protocol.
 - The picker transfers only confirmed App-owned copies into unique staging directories. Consumption awaits the actual read before cleanup, including failure, early rejection and cancellation. Cleanup failures are reported separately from successful saving. Startup cleanup is limited to this helper's UUID-named directories and excludes symbolic links.
 - Added ten Swift file-lifecycle tests using synthetic local files, including original-file protection, duplicate ownership, cancellation while reading, cleanup failure and startup sweep boundaries.
 - Five Python packaging regressions ran and passed on Windows. Static project/plist/scheme/source-archive and independent original-protocol fixture checks are included in the local release validation.
-- There are 47 XCTest methods in the current source. Swift compilation, these tests, actual picker copy paths and iPhone Bluetooth behavior have not been executed in this Windows environment. The included macOS workflow remains responsible for Xcode testing, unsigned device archive and automatic Release publication.
+- There are 47 XCTest methods in the 1.4.1 source. Swift compilation, these tests, actual picker copy paths and iPhone Bluetooth behavior have not been executed in this Windows environment. The included macOS workflow remains responsible for Xcode testing, unsigned device archive and automatic Release publication.
 
 ## Passed in the Windows authoring environment
 

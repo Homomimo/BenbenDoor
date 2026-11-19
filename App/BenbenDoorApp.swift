@@ -17,7 +17,7 @@ struct DoorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var buttonSize: CGFloat = 228
     @State private var importing = false
-    @State private var pendingUnlock = false
+    @State private var pendingUnlock: ContinuousClock.Instant?
     @State private var showDeleteConfirmation = false
     @State private var showClockConfirmation = false
     @State private var showSettings = false
@@ -71,12 +71,12 @@ struct DoorView: View {
         .sheet(isPresented: $importing) { KeyImportView().environmentObject(door) }
         .onOpenURL { url in
             guard url.scheme?.lowercased() == "benbenlock", url.host?.lowercased() == "unlock" else { return }
-            pendingUnlock = true
+            pendingUnlock = ContinuousClock().now
             runPendingUnlock()
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { door.appBecameActive(); runPendingUnlock() }
-            if phase == .background { pendingUnlock = false; door.appEnteredBackground() }
+        .onChange(of: scenePhase, initial: true) { previous, phase in
+            if phase == .active && !runPendingUnlock() { door.appBecameActive() }
+            if phase == .background && previous != .background { pendingUnlock = nil; door.appEnteredBackground() }
         }
         .sensoryFeedback(.success, trigger: door.lastSucceeded) { _, succeeded in succeeded }
     }
@@ -248,10 +248,11 @@ struct DoorView: View {
         }
     }
 
-    private func runPendingUnlock() {
-        guard pendingUnlock, scenePhase == .active, UIApplication.shared.applicationState == .active else { return }
-        pendingUnlock = false
-        door.start()
+    @discardableResult private func runPendingUnlock() -> Bool {
+        guard let started = pendingUnlock, scenePhase == .active, UIApplication.shared.applicationState == .active else { return false }
+        pendingUnlock = nil
+        door.start(from: .widgetURL, at: started)
+        return true
     }
 }
 
@@ -286,14 +287,15 @@ private struct KeyImportView: View {
                             else { resultMessage = door.status }
                         }
                     }
-                    .disabled(door.isBusy || door.isImporting || json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(door.isBusy || door.isImporting || json.isEmpty)
                 }
                 if !resultMessage.isEmpty {
                     Section("导入结果") { Text(resultMessage).font(.footnote) }
                 }
             }
             .navigationTitle("导入钥匙配置").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+            .interactiveDismissDisabled(door.isImporting)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.disabled(door.isImporting) } }
             .sheet(isPresented: $showFiles) {
                 KeyDocumentPicker { selection in
                     showFiles = false

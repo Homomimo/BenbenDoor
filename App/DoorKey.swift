@@ -48,6 +48,10 @@ struct DoorKey: Codable, Sendable {
     }
 
     func validate(at now: Date = Date()) throws {
+        try validity().check(now)
+    }
+
+    func validity() throws -> DoorValidity {
         guard schemaVersion == 1, !deviceID.isEmpty,
               advertisedName == "KD-\(deviceID)", !agentID.isEmpty, !sysID.isEmpty,
               agentID.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
@@ -56,8 +60,64 @@ struct DoorKey: Codable, Sendable {
               timeZone != nil, UInt64(config) != nil else {
             throw DoorError.message("配置格式不正确，请重新导入。")
         }
+        return DoorValidity(begin: begin, finish: finish)
+    }
+}
+
+struct DoorValidity {
+    let begin: Date
+    let finish: Date
+    func check(_ now: Date) throws {
         guard now >= begin else { throw DoorError.message("钥匙尚未生效。") }
         guard now <= finish else { throw DoorError.message("钥匙已过期，请更新配置。") }
+    }
+}
+
+// Only retained during one request. The key is still loaded from Keychain for every request.
+struct DoorRequestKey {
+    let key: DoorKey
+    let validity: DoorValidity
+    let authorization: String
+    let priorSubmission: DoorClockRecord?
+
+    init(_ key: DoorKey, priorSubmission: DoorClockRecord?) throws {
+        self.key = key
+        self.validity = try key.validity()
+        self.authorization = key.authorizationIdentity
+        self.priorSubmission = priorSubmission
+    }
+
+    func clockBlocks(at now: Date) -> Bool {
+        priorSubmission?.blocks(authorization: authorization, at: now) == true
+    }
+}
+
+// A scanned success only rehabilitates a different peripheral; retry the same
+// failed direct route after its short cooldown. The saved date is a routing hint.
+struct DoorDirectFailure: Codable {
+    let identity: String
+    let peripheral: UUID
+    let failedAt: Date
+    static let cooldown: TimeInterval = 60
+
+    func remaining(at now: Date) -> TimeInterval {
+        let age = now.timeIntervalSince(failedAt)
+        return (0..<Self.cooldown).contains(age) ? Self.cooldown - age : 0
+    }
+    func matches(_ identity: String, _ peripheral: UUID) -> Bool {
+        self.identity == identity && self.peripheral == peripheral
+    }
+
+    struct Active {
+        let failure: DoorDirectFailure
+        let until: ContinuousClock.Instant
+        func prefersScan(_ identity: String, _ peripheral: UUID, at instant: ContinuousClock.Instant = ContinuousClock().now) -> Bool {
+            instant < until && failure.matches(identity, peripheral)
+        }
+        func retainAfterSuccess(direct: Bool, identity: String, peripheral: UUID,
+                                at instant: ContinuousClock.Instant = ContinuousClock().now) -> Bool {
+            !direct && prefersScan(identity, peripheral, at: instant)
+        }
     }
 }
 
@@ -80,6 +140,12 @@ enum DoorUnlockPolicy {
     }
 }
 
+enum DoorCompletionText {
+    static func message(_ reason: String, submitted: Bool, confirmed: Bool) -> String {
+        submitted && !confirmed ? reason + " 开门指令已提交，未收到门锁最终结果，请先确认现场状态。" : reason
+    }
+}
+
 enum AppVersion {
     static var display: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
@@ -91,8 +157,17 @@ enum AppVersion {
 struct DoorClockRecord: Codable {
     let authorization: String
     let submittedAt: Date
-    func blocks(_ key: DoorKey, at now: Date) -> Bool {
-        authorization == key.authorizationIdentity && now < submittedAt
+    static func load(from defaults: UserDefaults = .standard) throws -> Self? {
+        guard let value = defaults.object(forKey: "doorClockRecord") else { return nil }
+        guard let data = value as? Data, let record = try? JSONDecoder().decode(Self.self, from: data),
+              record.authorization.utf8.count == 64,
+              record.authorization.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+            throw DoorError.message("上次操作时间记录无法读取，请在 App 设置中核对并确认手机时间。")
+        }
+        return record
+    }
+    func blocks(authorization current: String, at now: Date) -> Bool {
+        authorization == current && now < submittedAt
     }
 }
 
@@ -202,6 +277,12 @@ struct DoorKeyImportCopy: Sendable {
 
 enum DoorKeyImporter {
     static let sizeLimit = 64 * 1024
+    static func decodePasted(_ text: String) throws -> DoorKey {
+        guard text.utf8.prefix(sizeLimit + 1).count <= sizeLimit else {
+            throw DoorError.message("配置内容过大（最多 64 KB）。")
+        }
+        return try decode(Data(text.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
+    }
     static func decode(_ input: Data) throws -> DoorKey {
         guard input.count <= sizeLimit else { throw DoorError.message("配置文件过大。") }
         var data = input

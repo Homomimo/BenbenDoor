@@ -1,4 +1,5 @@
 import XCTest
+import CoreBluetooth
 @testable import BenbenDoor
 
 final class DoorProtocolTests: XCTestCase {
@@ -23,6 +24,97 @@ final class DoorProtocolTests: XCTestCase {
         XCTAssertThrowsError(try DoorUnlockPolicy.validate(background: false, enabled: true, foreground: false, deadline: deadline, now: instant))
         XCTAssertNoThrow(try DoorUnlockPolicy.validate(background: false, enabled: false, foreground: true, deadline: deadline, now: instant))
     }
+    func testBluetoothTerminalStatesNeverWaitForAnotherCallback() {
+        for state: CBManagerState in [.poweredOff, .unauthorized, .unsupported] {
+            XCTAssertEqual(DoorBluetoothReadiness(state, awaitingReadiness: true), .unavailable)
+            XCTAssertEqual(DoorBluetoothReadiness(state, awaitingReadiness: false), .unavailable)
+        }
+    }
+
+    func testBluetoothTransitionsWaitOnlyBeforeConnecting() {
+        for state: CBManagerState in [.unknown, .resetting] {
+            XCTAssertEqual(DoorBluetoothReadiness(state, awaitingReadiness: true), .waiting)
+            XCTAssertEqual(DoorBluetoothReadiness(state, awaitingReadiness: false), .interrupted)
+        }
+        XCTAssertEqual(DoorBluetoothReadiness(.poweredOn, awaitingReadiness: true), .startSearch)
+        XCTAssertEqual(DoorBluetoothReadiness(.poweredOn, awaitingReadiness: false), .unchanged)
+    }
+
+    func testPreparedKeyRechecksBothInclusiveBoundsAtSubmission() throws {
+        let prepared = try DoorRequestKey(key, priorSubmission: nil)
+        XCTAssertThrowsError(try prepared.validity.check(prepared.validity.begin.addingTimeInterval(-0.001)))
+        XCTAssertNoThrow(try prepared.validity.check(prepared.validity.begin))
+        XCTAssertNoThrow(try prepared.validity.check(prepared.validity.finish))
+        XCTAssertThrowsError(try prepared.validity.check(prepared.validity.finish.addingTimeInterval(0.001)))
+        var invalid = key; invalid.timezone = "+14:01"
+        XCTAssertThrowsError(try DoorRequestKey(invalid, priorSubmission: nil))
+    }
+
+    func testPreparedClockGuardObservesRollbackAndKeyRenewal() throws {
+        let record = DoorClockRecord(authorization: key.authorizationIdentity, submittedAt: now)
+        let request = try DoorRequestKey(key, priorSubmission: record)
+        XCTAssertFalse(request.clockBlocks(at: now))
+        XCTAssertTrue(request.clockBlocks(at: now.addingTimeInterval(-1)))
+        var renewed = key; renewed.seqNo += 1
+        XCTAssertFalse(try DoorRequestKey(renewed, priorSubmission: record).clockBlocks(at: now.addingTimeInterval(-1)))
+    }
+
+    func testMissingClockRecordIsDifferentFromUnreadableOrMalformedRecord() throws {
+        let suite = "DoorClockTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertNil(try DoorClockRecord.load(from: defaults))
+        for invalid: Any in ["wrong type" as Any, Data("{}".utf8),
+                             try JSONEncoder().encode(DoorClockRecord(authorization: "", submittedAt: now))] {
+            defaults.set(invalid, forKey: "doorClockRecord")
+            XCTAssertThrowsError(try DoorClockRecord.load(from: defaults))
+        }
+        let valid = DoorClockRecord(authorization: key.authorizationIdentity, submittedAt: now)
+        defaults.set(try JSONEncoder().encode(valid), forKey: "doorClockRecord")
+        XCTAssertEqual(try DoorClockRecord.load(from: defaults)?.submittedAt, now)
+    }
+
+    func testDirectFailureSurvivesRestartOnlyForSameDoorAndPeripheral() throws {
+        let id = UUID()
+        let record = DoorDirectFailure(identity: "Door A", peripheral: id, failedAt: now)
+        let saved = try JSONDecoder().decode(DoorDirectFailure.self, from: JSONEncoder().encode(record))
+        XCTAssertTrue(saved.matches("Door A", id))
+        XCTAssertFalse(saved.matches("Door B", id))
+        XCTAssertFalse(saved.matches("Door A", UUID()))
+        XCTAssertEqual(saved.remaining(at: now.addingTimeInterval(59)), 1)
+        XCTAssertEqual(saved.remaining(at: now.addingTimeInterval(60)), 0)
+        XCTAssertEqual(saved.remaining(at: now.addingTimeInterval(-1)), 0)
+    }
+
+    func testScannedSuccessDoesNotClearFailedDirectRouteUntilCooldownEnds() {
+        let id = UUID(), instant = ContinuousClock().now
+        let active = DoorDirectFailure.Active(failure: .init(identity: "A", peripheral: id, failedAt: now),
+                                              until: instant.advanced(by: .seconds(10)))
+        XCTAssertTrue(active.retainAfterSuccess(direct: false, identity: "A", peripheral: id, at: instant))
+        XCTAssertFalse(active.retainAfterSuccess(direct: true, identity: "A", peripheral: id, at: instant))
+        XCTAssertFalse(active.retainAfterSuccess(direct: false, identity: "A", peripheral: UUID(), at: instant))
+        XCTAssertFalse(active.prefersScan("A", id, at: instant.advanced(by: .seconds(10))))
+    }
+
+    func testPostSubmissionInterruptionIsReportedAsUnknownOnlyWhenUnconfirmed() {
+        let interrupted = "连接中断。"
+        XCTAssertEqual(DoorCompletionText.message(interrupted, submitted: false, confirmed: false), interrupted)
+        XCTAssertTrue(DoorCompletionText.message(interrupted, submitted: true, confirmed: false).contains("未收到门锁最终结果"))
+        XCTAssertEqual(DoorCompletionText.message("门锁拒绝。", submitted: true, confirmed: true), "门锁拒绝。")
+    }
+
+    func testPasteLimitCountsOriginalUTF8BytesIncludingWhitespace() throws {
+        var fixture = key
+        fixture.validFrom = "2000-01-01T00:00:00Z"; fixture.validUntil = "2127-01-01T00:00:00Z"
+        let json = String(decoding: try JSONEncoder().encode(fixture), as: UTF8.self)
+        let padded = json + String(repeating: " ", count: DoorKeyImporter.sizeLimit - json.utf8.count)
+        XCTAssertEqual(try DoorKeyImporter.decodePasted(padded).deviceID, fixture.deviceID)
+        XCTAssertThrowsError(try DoorKeyImporter.decodePasted(padded + " "))
+        XCTAssertThrowsError(try DoorKeyImporter.decodePasted(String(repeating: "门", count: 22000))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("过大"))
+        }
+    }
+
     // Expected values generated by executing the original JS with synthetic IDs.
     private var key: DoorKey {
         DoorKey(schemaVersion: 1, displayName: "测试", deviceID: "123456", advertisedName: "KD-123456",
@@ -231,10 +323,10 @@ final class DoorProtocolTests: XCTestCase {
 
     func testClockRollbackRecordIsScopedToAuthorization() {
         let record = DoorClockRecord(authorization: key.authorizationIdentity, submittedAt: now)
-        XCTAssertTrue(record.blocks(key, at: now.addingTimeInterval(-60)))
-        XCTAssertFalse(record.blocks(key, at: now.addingTimeInterval(1)))
+        XCTAssertTrue(record.blocks(authorization: key.authorizationIdentity, at: now.addingTimeInterval(-60)))
+        XCTAssertFalse(record.blocks(authorization: key.authorizationIdentity, at: now.addingTimeInterval(1)))
         var renewed = key; renewed.seqNo += 1
-        XCTAssertFalse(record.blocks(renewed, at: now.addingTimeInterval(-60)))
+        XCTAssertFalse(record.blocks(authorization: renewed.authorizationIdentity, at: now.addingTimeInterval(-60)))
         XCTAssertEqual(renewed.connectionIdentity, key.connectionIdentity)
         renewed.devID += 1
         XCTAssertNotEqual(renewed.connectionIdentity, key.connectionIdentity)

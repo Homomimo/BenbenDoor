@@ -9,6 +9,7 @@ struct UnlockDoorIntent: AppIntent {
     static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        let started = ContinuousClock().now
         let door = BluetoothDoor.shared
         door.recordShortcutEvent("已开始执行蓝牙开门，版本 \(AppVersion.display)")
         guard KeyStore.backgroundUnlockEnabled else {
@@ -20,7 +21,7 @@ struct UnlockDoorIntent: AppIntent {
             throw DoorError.message("请先在奔奔开门 App 内允许蓝牙访问，并完成一次前台开门测试。")
         }
         do {
-            let message = try await door.unlockFromShortcut()
+            let message = try await door.unlockFromShortcut(started: started)
             door.recordShortcutEvent("本次开门已完成")
             return .result(dialog: IntentDialog(stringLiteral: message))
         } catch {

@@ -27,8 +27,8 @@ assert (app / 'Assets.car').is_file(), 'Compiled asset catalog missing'
 assert app_info.get('CFBundleIcons', {}).get('CFBundlePrimaryIcon', {}).get('CFBundleIconName') == 'AppIcon', 'App icon metadata missing'
 assert widget_info['CFBundleIdentifier'].startswith(app_info['CFBundleIdentifier'] + '.')
 assert widget_info['NSExtension']['NSExtensionPointIdentifier'] == 'com.apple.widgetkit-extension'
-assert 'iPhoneOS' in app_info['CFBundleSupportedPlatforms'], 'Simulator builds cannot be installed on iPhone'
 for bundle, info in [(app, app_info), (widget, widget_info)]:
+    assert info.get('CFBundleSupportedPlatforms') == ['iPhoneOS'], f'Simulator builds cannot be installed on iPhone: {bundle.name}'
     executable = bundle / info['CFBundleExecutable']
     assert executable.is_file(), executable
     archs = subprocess.check_output(['xcrun', 'lipo', '-archs', str(executable)], text=True).split()
@@ -40,6 +40,14 @@ for bundle, info in [(app, app_info), (widget, widget_info)]:
 metadata = app / 'Metadata.appintents'
 files = [p for p in metadata.rglob('*') if p.is_file()] if metadata.is_dir() else []
 assert files and any(b'UnlockDoorIntent' in p.read_bytes() for p in files), 'Main app unlock shortcut metadata missing'
+
+# An empty XCTest run is not evidence that the release was tested. Select the
+# largest successful XCTest aggregate; another runner may print a zero-test footer.
+tests_log = (root / 'build/ci/tests.log').read_text(encoding='utf-8', errors='replace')
+summaries = list(re.finditer(r'Executed (\d+) tests?, with (\d+) failures?[^\n]*', tests_log))
+assert summaries and all(int(s[2]) == 0 for s in summaries), 'Missing or failing XCTest summary'
+summary = max(summaries, key=lambda s: int(s[1]))
+assert int(summary[1]) > 0, 'No XCTest cases ran'
 
 out = root / 'dist/BenbenDoor-unsigned.ipa'
 out.parent.mkdir(exist_ok=True)
@@ -58,15 +66,13 @@ with zipfile.ZipFile(out) as archive:
     assert not any(name.endswith('.private.json') for name in archive.namelist())
 print('Unsigned device IPA (app + widget):', out)
 
-tests_log = (root / 'build/ci/tests.log').read_text(encoding='utf-8', errors='replace')
-summaries = re.findall(r'Executed \d+ tests?, with \d+ failures?[^\n]*', tests_log)
 build_info = {
     'appVersion': app_info['CFBundleShortVersionString'],
     'build': app_info['CFBundleVersion'],
     'iosSdk': (root / 'build/ci/ios-sdk.txt').read_text().strip(),
     'xcode': (root / 'build/ci/xcode-version.txt').read_text().strip(),
     'commit': os.environ.get('GITHUB_SHA', 'local'),
-    'tests': summaries[-1] if summaries else 'xcodebuild test succeeded; inspect ProtocolTests.xcresult for details',
+    'tests': summary[0].strip(),
     'deviceValidation': 'Not performed by this build workflow',
 }
 (out.parent / 'BuildInfo.json').write_text(json.dumps(build_info, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
