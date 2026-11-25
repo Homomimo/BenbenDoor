@@ -323,11 +323,12 @@ enum DoorKeyImporter {
 }
 
 enum KeyStore {
-    static var backgroundUnlockEnabled: Bool { UserDefaults.standard.bool(forKey: "backgroundUnlockEnabled") }
+    static let backgroundUnlockPreference = "backgroundUnlockEnabled"
+    static var backgroundUnlockEnabled: Bool { UserDefaults.standard.bool(forKey: backgroundUnlockPreference) }
     static func setBackgroundUnlockEnabled(_ enabled: Bool) throws {
         guard let key = try load() else { throw DoorError.message("请先导入门锁配置。") }
         try save(key, background: enabled)
-        UserDefaults.standard.set(enabled, forKey: "backgroundUnlockEnabled")
+        UserDefaults.standard.set(enabled, forKey: backgroundUnlockPreference)
     }
     private static let service = "BenbenDoor.local-key"
     private static let account = "active-door"
@@ -366,6 +367,6 @@ enum KeyStore {
         guard code == errSecSuccess || code == errSecItemNotFound else {
             throw DoorError.message("删除失败（\(code)）。")
         }
-        UserDefaults.standard.removeObject(forKey: "backgroundUnlockEnabled")
+        UserDefaults.standard.removeObject(forKey: backgroundUnlockPreference)
     }
 }

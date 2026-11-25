@@ -37,11 +37,14 @@ class PackageTests(unittest.TestCase):
         (self.app / 'Assets.car').write_bytes(b'synthetic-assets')
         metadata = self.app / 'Metadata.appintents'
         metadata.mkdir()
-        (metadata / 'extract.actionsdata').write_bytes(b'{"intent":"UnlockDoorIntent"}')
+        (metadata / 'extract.actionsdata').write_bytes(b'["UnlockDoorIntent","WidgetUnlockIntent"]')
+        widget_metadata = self.widget / 'Metadata.appintents'
+        widget_metadata.mkdir()
+        (widget_metadata / 'extract.actionsdata').write_bytes(b'["WidgetUnlockIntent"]')
         diagnostic = self.root / 'build/ci'
         (diagnostic / 'ios-sdk.txt').write_text('26.0\n')
         (diagnostic / 'xcode-version.txt').write_text('Synthetic Xcode version\n')
-        (diagnostic / 'tests.log').write_text('Executed 30 tests, with 0 failures (0 unexpected)\n')
+        self.test_summary = json.dumps({'passedTests': 30, 'failedTests': 0, 'result': 'Passed'})
 
     def run_package(self):
         def ditto(arguments, **kwargs):
@@ -54,7 +57,13 @@ class PackageTests(unittest.TestCase):
             else:
                 shutil.copytree(arguments[-2], arguments[-1])
 
-        with patch('subprocess.check_output', return_value='arm64\n'), patch('subprocess.run', side_effect=ditto), contextlib.redirect_stdout(io.StringIO()):
+        def xcrun(arguments, **kwargs):
+            if arguments[1] == 'xcresulttool':
+                return self.test_summary
+            self.assertEqual(arguments[1], 'lipo')
+            return 'arm64\n'
+
+        with patch('subprocess.check_output', side_effect=xcrun), patch('subprocess.run', side_effect=ditto), contextlib.redirect_stdout(io.StringIO()):
             runpy.run_path(str(self.script), run_name='__main__')
 
     def change_info(self, bundle, key, value):
@@ -63,7 +72,7 @@ class PackageTests(unittest.TestCase):
         info[key] = value
         path.write_bytes(plistlib.dumps(info))
 
-    def test_includes_widget_and_manifest_without_widget_intent_metadata(self):
+    def test_includes_widget_and_manifest(self):
         self.run_package()
         info = json.loads((self.root / 'dist/BuildInfo.json').read_text(encoding='utf-8'))
         self.assertEqual((info['appVersion'], info['build'], info['iosSdk']), ('1.4.0', '12', '26.0'))
@@ -73,41 +82,51 @@ class PackageTests(unittest.TestCase):
 
     def test_rejects_mismatched_widget_version(self):
         self.change_info(self.widget, 'CFBundleVersion', '11')
-        with self.assertRaisesRegex(AssertionError, 'version mismatch'):
+        with self.assertRaisesRegex(RuntimeError, 'version mismatch'):
             self.run_package()
 
     def test_rejects_unresolved_version_variables(self):
         for bundle in [self.app, self.widget]:
             self.change_info(bundle, 'CFBundleVersion', '$(CURRENT_PROJECT_VERSION)')
-        with self.assertRaisesRegex(AssertionError, 'Unresolved version'):
+        with self.assertRaisesRegex(RuntimeError, 'Unresolved version'):
             self.run_package()
 
-    def test_rejects_missing_background_shortcut_metadata(self):
-        (self.app / 'Metadata.appintents/extract.actionsdata').write_bytes(b'{}')
-        with self.assertRaisesRegex(AssertionError, 'shortcut metadata missing'):
-            self.run_package()
+    def test_rejects_missing_intent_metadata_in_either_bundle(self):
+        for bundle, replacement in [(self.app, b'["WidgetUnlockIntent"]'), (self.widget, b'[]')]:
+            path = bundle / 'Metadata.appintents/extract.actionsdata'
+            previous = path.read_bytes()
+            with self.subTest(bundle=bundle.name):
+                try:
+                    path.write_bytes(replacement)
+                    with self.assertRaisesRegex(RuntimeError, 'shortcut metadata missing'):
+                        self.run_package()
+                finally:
+                    path.write_bytes(previous)
 
     def test_rejects_simulator_app(self):
         self.change_info(self.app, 'CFBundleSupportedPlatforms', ['iPhoneSimulator'])
-        with self.assertRaisesRegex(AssertionError, 'Simulator builds'):
+        with self.assertRaisesRegex(RuntimeError, 'Simulator builds'):
             self.run_package()
 
     def test_rejects_simulator_widget_even_with_device_app(self):
         self.change_info(self.widget, 'CFBundleSupportedPlatforms', ['iPhoneSimulator'])
-        with self.assertRaisesRegex(AssertionError, 'Simulator builds'):
+        with self.assertRaisesRegex(RuntimeError, 'Simulator builds'):
             self.run_package()
 
     def test_rejects_empty_missing_and_failing_test_runs(self):
-        for log in ['Executed 0 tests, with 0 failures', 'No XCTest summary',
-                    'Executed 1 test, with 1 failure\nExecuted 3 tests, with 0 failures']:
-            with self.subTest(log=log):
-                (self.root / 'build/ci/tests.log').write_text(log)
-                with self.assertRaisesRegex(AssertionError, 'XCTest'):
+        for result in ['{}', 'Invalid JSON',
+                       '{"passedTests":0,"failedTests":0,"result":"Passed"}',
+                       '{"passedTests":3,"failedTests":1,"result":"Failed"}',
+                       '{"passedTests":3,"failedTests":0,"result":"Failed"}']:
+            with self.subTest(result=result):
+                self.test_summary = result
+                with self.assertRaisesRegex(RuntimeError, 'XCTest'):
                     self.run_package()
                 self.assertFalse((self.root / 'dist/BenbenDoor-unsigned.ipa').exists())
 
-    def test_zero_test_footer_does_not_hide_successful_suite(self):
-        (self.root / 'build/ci/tests.log').write_text('Executed 8 tests, with 0 failures\nExecuted 0 tests, with 0 failures')
+    def test_structured_summary_is_used_instead_of_log(self):
+        (self.root / 'build/ci/tests.log').write_text('Executed 0 tests, with 0 failures')
+        self.test_summary = json.dumps({'passedTests': 8, 'failedTests': 0, 'result': 'Passed'})
         self.run_package()
         info = json.loads((self.root / 'dist/BuildInfo.json').read_text(encoding='utf-8'))
         self.assertIn('8 tests', info['tests'])

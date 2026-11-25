@@ -13,7 +13,7 @@ struct DoorProvider: TimelineProvider {
 struct DoorWidgetView: View {
     @Environment(\.widgetFamily) private var family
     var body: some View {
-        Group {
+        Button(intent: WidgetUnlockIntent()) {
             if family == .accessoryCircular {
                 Image(systemName: "lock.open.fill").font(.title2)
             } else if family == .accessoryRectangular {
@@ -43,9 +43,9 @@ struct DoorWidgetView: View {
                 .foregroundStyle(.primary)
             }
         }
+        .buttonStyle(.plain)
         .containerBackground(for: .widget) { widgetBackground }
-        .widgetURL(URL(string: "benbenlock://unlock"))
-        .accessibilityLabel("打开奔奔 App 并执行开门")
+        .accessibilityLabel("一键开门")
     }
 
     // This builder needs a View. Color.blue.gradient is an AnyGradient style,

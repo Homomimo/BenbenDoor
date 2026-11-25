@@ -98,7 +98,7 @@ The 10-round review and device comparison procedure are in `1.4.2-十轮审核.m
 - Added a glass-door app icon asset catalog with nine opaque PNG sizes; linked it in the app resources phase and set AppIcon for Debug and Release. Validated PNG dimensions and RGB mode locally. Appearance after Xcode asset compilation and installation still needs confirmation.
 
 - Swift compilation, Xcode build, code signing, installation and WidgetKit runtime testing.
-- The forty-seven XCTest methods included in the current project.
+- The 56 XCTest methods included in the current project.
 - iPhone Core Bluetooth communication, actual door response or physical opening.
 
 The source and protocol fixture checks are not a substitute for an Xcode build or an iPhone test. Run the included GitHub Actions workflow or build on a Mac; sign the IPA and test on an iPhone. Android physical opening was confirmed by the user on 2026-11-14, which does not verify the iOS app.

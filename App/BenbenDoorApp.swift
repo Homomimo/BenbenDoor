@@ -17,13 +17,14 @@ struct DoorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var buttonSize: CGFloat = 228
     @State private var importing = false
-    @State private var pendingUnlock: ContinuousClock.Instant?
+    @State private var externalUnlockRequestedAt: ContinuousClock.Instant?
+    @State private var showExternalUnlockConfirmation = false
     @State private var showDeleteConfirmation = false
     @State private var showClockConfirmation = false
     @State private var showSettings = false
     @State private var importAfterSettings = false
     @State private var showLog = false
-    @State private var backgroundUnlock = KeyStore.backgroundUnlockEnabled
+    @AppStorage(KeyStore.backgroundUnlockPreference) private var backgroundUnlock = false
     @State private var backgroundSettingError = ""
     private var accent: Color { door.lastSucceeded ? .green : .blue }
 
@@ -47,6 +48,9 @@ struct DoorView: View {
                     }
                     unlockControl
                     statusCard
+                    if let notice = door.requestNotice {
+                        Text(notice).font(.footnote).foregroundStyle(.secondary)
+                    }
                     if door.isBusy {
                         Button("停止本次操作", role: .cancel) { door.cancel() }
                             .font(.subheadline.weight(.semibold)).padding(.horizontal, 22).padding(.vertical, 14)
@@ -70,13 +74,28 @@ struct DoorView: View {
         }) { settings }
         .sheet(isPresented: $importing) { KeyImportView().environmentObject(door) }
         .onOpenURL { url in
-            guard url.scheme?.lowercased() == "benbenlock", url.host?.lowercased() == "unlock" else { return }
-            pendingUnlock = ContinuousClock().now
-            runPendingUnlock()
+            guard url.absoluteString.caseInsensitiveCompare("benbenlock://unlock") == .orderedSame,
+                  externalUnlockRequestedAt == nil else { return }
+            externalUnlockRequestedAt = ContinuousClock().now
+            showExternalUnlockConfirmation = true
+        }
+        .alert("确认开门？", isPresented: $showExternalUnlockConfirmation) {
+            Button("取消", role: .cancel) { externalUnlockRequestedAt = nil }
+            Button("确认开门") {
+                guard let requestedAt = externalUnlockRequestedAt else { return }
+                externalUnlockRequestedAt = nil
+                door.start(from: .externalURL, at: requestedAt)
+            }
+        } message: {
+            Text("外部链接请求打开已配置的门锁。")
         }
         .onChange(of: scenePhase, initial: true) { previous, phase in
-            if phase == .active && !runPendingUnlock() { door.appBecameActive() }
-            if phase == .background && previous != .background { pendingUnlock = nil; door.appEnteredBackground() }
+            if phase == .active { door.appBecameActive() }
+            if phase == .background && previous != .background {
+                externalUnlockRequestedAt = nil
+                showExternalUnlockConfirmation = false
+                door.appEnteredBackground()
+            }
         }
         .sensoryFeedback(.success, trigger: door.lastSucceeded) { _, succeeded in succeeded }
     }
@@ -223,7 +242,7 @@ struct DoorView: View {
                     Toggle("允许锁屏快捷开门", isOn: Binding(get: { backgroundUnlock }, set: { enabled in
                         do {
                             try KeyStore.setBackgroundUnlockEnabled(enabled)
-                            backgroundUnlock = enabled
+                            backgroundSettingError = ""
                         } catch { backgroundSettingError = error.localizedDescription }
                     }))
                     .disabled(!door.hasKey || door.isBusy || door.isImporting)
@@ -237,7 +256,7 @@ struct DoorView: View {
                 }
             }
             .navigationTitle("钥匙与设置").navigationBarTitleDisplayMode(.inline)
-            .onAppear { backgroundUnlock = KeyStore.backgroundUnlockEnabled }
+            .onAppear { backgroundSettingError = "" }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSettings = false } } }
             .confirmationDialog("移除本机保存的门锁钥匙？", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
                 Button("移除钥匙", role: .destructive) { door.removeKey() }
@@ -246,13 +265,6 @@ struct DoorView: View {
                 Button("已校正，重置操作时间记录") { door.confirmCorrectedClock() }
             }
         }
-    }
-
-    @discardableResult private func runPendingUnlock() -> Bool {
-        guard let started = pendingUnlock, scenePhase == .active, UIApplication.shared.applicationState == .active else { return false }
-        pendingUnlock = nil
-        door.start(from: .widgetURL, at: started)
-        return true
     }
 }
 

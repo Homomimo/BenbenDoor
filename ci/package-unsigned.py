@@ -3,7 +3,6 @@ import pathlib
 import json
 import os
 import plistlib
-import re
 import subprocess
 import tempfile
 import zipfile
@@ -18,36 +17,55 @@ def read_info(bundle):
         return plistlib.load(stream)
 
 
+class PackagingError(RuntimeError):
+    """An archive or test result did not meet the release requirements."""
+
+
+def require(condition, message):
+    if not condition:
+        raise PackagingError(message)
+
+
 app_info = read_info(app)
 widget_info = read_info(widget)
 for field in ['CFBundleShortVersionString', 'CFBundleVersion']:
-    assert app_info[field] == widget_info[field], f'App/widget version mismatch: {field}'
-    assert '$(' not in app_info[field], f'Unresolved version setting: {field}'
-assert (app / 'Assets.car').is_file(), 'Compiled asset catalog missing'
-assert app_info.get('CFBundleIcons', {}).get('CFBundlePrimaryIcon', {}).get('CFBundleIconName') == 'AppIcon', 'App icon metadata missing'
-assert widget_info['CFBundleIdentifier'].startswith(app_info['CFBundleIdentifier'] + '.')
-assert widget_info['NSExtension']['NSExtensionPointIdentifier'] == 'com.apple.widgetkit-extension'
+    require(app_info[field] == widget_info[field], f'App/widget version mismatch: {field}')
+    require('$(' not in app_info[field], f'Unresolved version setting: {field}')
+require((app / 'Assets.car').is_file(), 'Compiled asset catalog missing')
+primary_icon = app_info.get('CFBundleIcons', {}).get('CFBundlePrimaryIcon', {})
+require(primary_icon.get('CFBundleIconName') == 'AppIcon', 'App icon metadata missing')
+require(widget_info['CFBundleIdentifier'].startswith(app_info['CFBundleIdentifier'] + '.'),
+        'Widget bundle identifier must use the app identifier prefix')
+require(widget_info['NSExtension']['NSExtensionPointIdentifier'] == 'com.apple.widgetkit-extension',
+        'WidgetKit extension declaration missing')
 for bundle, info in [(app, app_info), (widget, widget_info)]:
-    assert info.get('CFBundleSupportedPlatforms') == ['iPhoneOS'], f'Simulator builds cannot be installed on iPhone: {bundle.name}'
+    require(info.get('CFBundleSupportedPlatforms') == ['iPhoneOS'],
+            f'Simulator builds cannot be installed on iPhone: {bundle.name}')
     executable = bundle / info['CFBundleExecutable']
-    assert executable.is_file(), executable
+    require(executable.is_file(), f'Bundle executable missing: {executable}')
     archs = subprocess.check_output(['xcrun', 'lipo', '-archs', str(executable)], text=True).split()
-    assert 'arm64' in archs, (bundle.name, archs)
-    assert not (bundle / 'embedded.mobileprovision').exists(), 'Expected an unsigned archive'
+    require('arm64' in archs, f'arm64 executable missing: {bundle.name}, architectures: {archs}')
+    require(not (bundle / 'embedded.mobileprovision').exists(), f'Expected an unsigned bundle: {bundle.name}')
 
-# The retained shortcut belongs to the main app only. The timeline widget no
-# longer declares an App Intent and does not require extracted intent metadata.
-metadata = app / 'Metadata.appintents'
-files = [p for p in metadata.rglob('*') if p.is_file()] if metadata.is_dir() else []
-assert files and any(b'UnlockDoorIntent' in p.read_bytes() for p in files), 'Main app unlock shortcut metadata missing'
+for bundle, intents in [(app, ['UnlockDoorIntent', 'WidgetUnlockIntent']), (widget, ['WidgetUnlockIntent'])]:
+    metadata = [path.read_bytes() for path in (bundle / 'Metadata.appintents').rglob('*') if path.is_file()]
+    for intent in intents:
+        require(any(intent.encode() in contents for contents in metadata),
+                f'Unlock shortcut metadata missing: {bundle.name}, {intent}')
 
-# An empty XCTest run is not evidence that the release was tested. Select the
-# largest successful XCTest aggregate; another runner may print a zero-test footer.
-tests_log = (root / 'build/ci/tests.log').read_text(encoding='utf-8', errors='replace')
-summaries = list(re.finditer(r'Executed (\d+) tests?, with (\d+) failures?[^\n]*', tests_log))
-assert summaries and all(int(s[2]) == 0 for s in summaries), 'Missing or failing XCTest summary'
-summary = max(summaries, key=lambda s: int(s[1]))
-assert int(summary[1]) > 0, 'No XCTest cases ran'
+# Read the result bundle instead of parsing human-readable xcodebuild output.
+result_bundle = root / 'build/ci/ProtocolTests.xcresult'
+try:
+    summary = json.loads(subprocess.check_output(
+        ['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', str(result_bundle)], text=True
+    ))
+except (subprocess.CalledProcessError, ValueError) as error:
+    raise PackagingError('Could not read XCTest results') from error
+require(isinstance(summary, dict), 'Invalid XCTest summary')
+passed = summary.get('passedTests')
+failed = summary.get('failedTests')
+require(type(passed) is int and passed > 0 and type(failed) is int and failed == 0
+        and summary.get('result') == 'Passed', 'Missing, empty or failing XCTest results')
 
 out = root / 'dist/BenbenDoor-unsigned.ipa'
 out.parent.mkdir(exist_ok=True)
@@ -60,10 +78,12 @@ with tempfile.TemporaryDirectory(prefix='benben-ipa-') as temporary:
     subprocess.run(['/usr/bin/ditto', '-c', '-k', '--keepParent', str(payload), str(out)], check=True)
 
 with zipfile.ZipFile(out) as archive:
-    assert archive.testzip() is None
-    assert 'Payload/BenbenDoor.app/BenbenDoor' in archive.namelist()
-    assert 'Payload/BenbenDoor.app/PlugIns/BenbenDoorWidget.appex/BenbenDoorWidget' in archive.namelist()
-    assert not any(name.endswith('.private.json') for name in archive.namelist())
+    require(archive.testzip() is None, 'Corrupt IPA contents')
+    names = archive.namelist()
+    require('Payload/BenbenDoor.app/BenbenDoor' in names, 'App executable missing from IPA')
+    require('Payload/BenbenDoor.app/PlugIns/BenbenDoorWidget.appex/BenbenDoorWidget' in names,
+            'Widget executable missing from IPA')
+    require(not any(name.endswith('.private.json') for name in names), 'Private configuration found in IPA')
 print('Unsigned device IPA (app + widget):', out)
 
 build_info = {
@@ -72,7 +92,7 @@ build_info = {
     'iosSdk': (root / 'build/ci/ios-sdk.txt').read_text().strip(),
     'xcode': (root / 'build/ci/xcode-version.txt').read_text().strip(),
     'commit': os.environ.get('GITHUB_SHA', 'local'),
-    'tests': summary[0].strip(),
+    'tests': f'Passed {passed} tests, with {failed} failures',
     'deviceValidation': 'Not performed by this build workflow',
 }
 (out.parent / 'BuildInfo.json').write_text(json.dumps(build_info, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

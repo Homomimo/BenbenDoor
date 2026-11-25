@@ -1,6 +1,6 @@
 # 奔奔开门 · iOS 测试工程
 
-> 当前修订：1.4.2 Build 14。三个入口共用一次钥匙准备；蓝牙关闭直接提示，近期直连失败时优先扫描。详见 [十轮审核与修复](1.4.2-十轮审核.md)。
+> 当前版本号：1.4.2 Build 14。外部链接需要在 App 内确认，小组件使用独立的开门动作。缓存直连遇到可恢复故障时，若尚未提交开门指令，可回退扫描一次。此前改动见 [十轮审核与修复](1.4.2-十轮审核.md)。
 
 
 SwiftUI App + WidgetKit 桌面/锁屏小组件，最低 iOS 17。无需第三方依赖，直接使用 Xcode 工程。
@@ -11,7 +11,7 @@ SwiftUI App + WidgetKit 桌面/锁屏小组件，最低 iOS 17。无需第三方
 
 已内置冰蓝玻璃门图标：`App/Assets.xcassets/AppIcon.appiconset` 包含 iPhone 各尺寸及 1024px 主图，已连接 App 的资源编译和 AppIcon 设置。提交源码时请包含整个 Assets.xcassets 文件夹和更新后的 project.pbxproj。图标 PNG 为不透明正方形，由系统应用外轮廓。
 
-点击小组件后，系统打开 App；App 进入前台后自动执行一次“缓存直连或扫描 → 连接 → 选锁 → 开门 → 显示结果”。普通打开 App 不会自动开门。手机需要解锁时先由系统完成解锁。首次使用需要导入配置并授权蓝牙。
+点击小组件的开门按钮后，系统按需要求解锁手机并打开 App。App 进入前台后执行一次开门，并显示结果。普通打开 App 不会自动开门。首次使用需要导入配置并授权蓝牙。
 
 
 ## 安装到 iPhone
@@ -38,7 +38,7 @@ SwiftUI App + WidgetKit 桌面/锁屏小组件，最低 iOS 17。无需第三方
 
 App 注册了 URL scheme：`benbenlock://unlock`。
 
-可以在快捷指令中添加“URL”动作，填入上述值，再添加“打开 URL”动作。运行会打开 App 并自动执行一次。小组件使用同一入口，配置文件和钥匙参数均不会放入 URL。
+可以在快捷指令中添加“URL”动作，填入上述值，再添加“打开 URL”动作。运行后在 App 内点击“确认开门”才会开始连接。取消确认或离开 App 到后台会清除待确认请求。配置文件和钥匙参数均不会放入 URL。
 
 ## 配置文件
 
@@ -61,7 +61,7 @@ App 注册了 URL scheme：`benbenlock://unlock`。
 - 原代码的 ASCII ID 查表转换、选锁报文、secKey 响应读取、时间编码、普通开门报文及带设备参数的校验。
 - 支持通知分片拼接、帧头同步、长度和校验检查、阶段超时、取消及错误提示。
 - 只有收到业务响应 resultCode=0 才显示成功；蓝牙写入确认或超时不会当作成功。
-- 普通开门操作不自动重试，避免结果不明时重复下发。
+- 缓存直连遇到可恢复的通信故障时，可以在开门指令提交前回退扫描一次。开门指令提交后停止自动重试，避免结果不明时重复下发。
 - 不包含电梯、设卡、改密码、设置指纹、门锁校时或平台日志回传。不会复刻原小程序的 SOE 读取/清除确认流程。
 - 不依赖网络、位置权限或 App Group。1.2 使用 bluetooth-central 后台模式尝试执行主动触发的快捷指令；后台可靠性待实机确认。
 
@@ -100,4 +100,4 @@ Simulator 可跑协议单元测试，实际蓝牙开门需 iPhone。当前制作
 - BenbenDoor.xcodeproj/：App、Widget 和 XCTest targets，含共享 scheme。
 - 配置格式示例.json：合成配置格式。
 
-版本统一保存在 Version.xcconfig，App/Widget 的 Info.plist 使用构建变量，界面和日志读取实际安装版本。更新仓库时必须一并提交 Version.xcconfig。ci/test-package.py 含5项可在 Windows/macOS 运行的合成打包策略测试，CI 会在 Xcode 测试前执行。
+版本统一保存在 Version.xcconfig，App/Widget 的 Info.plist 使用构建变量，界面和日志读取实际安装版本。更新仓库时必须一并提交 Version.xcconfig。ci/test-package.py 含 8 项可在 Windows/macOS 运行的合成打包策略测试，CI 会在 Xcode 测试前执行。
